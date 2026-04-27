@@ -1,0 +1,74 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --rp-dunkelrot: #6d1723;
+  --rp-rot-hell: #dc0d1d;
+  --rp-rot-mittel: #aa1a1d;
+  --rp-beige: #d4c9b5;
+  --rp-grau: #575e62;
+  --rp-hellgrau: #f3f3f3;
+  --rp-weiss: #ffffff;
+  --rp-schwarz: #1a1a1a;
+
+  color-scheme: dark;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--rp-schwarz);
+    color: var(--rp-hellgrau);
+    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+}
+
+@layer components {
+  .rp-btn {
+    @apply inline-flex items-center justify-center bg-rp-rot text-white px-5 py-2.5 rounded-rp font-bold uppercase tracking-rp transition-colors duration-rp;
+  }
+  .rp-btn:hover {
+    background-color: var(--rp-rot-mittel);
+  }
+  .rp-btn:active {
+    background-color: var(--rp-dunkelrot);
+  }
+  .rp-btn-secondary {
+    @apply inline-flex items-center justify-center bg-transparent text-rp-beige border border-rp-beige px-5 py-2.5 rounded-rp font-bold uppercase tracking-rp transition-colors duration-rp;
+  }
+  .rp-btn-secondary:hover {
+    @apply border-rp-rot text-rp-rot;
+  }
+  .rp-card {
+    @apply bg-rp-schwarz border border-rp-beige rounded-rp transition-all duration-rp;
+  }
+  .rp-card:hover {
+    @apply border-rp-rot;
+    transform: scale(1.02);
+  }
+  .rp-panel {
+    @apply bg-rp-schwarz border border-rp-beige rounded-rp;
+  }
+  .rp-mono {
+    font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+  }
+}
