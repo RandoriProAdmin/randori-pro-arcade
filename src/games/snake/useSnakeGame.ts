@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useReducer } from 'react';
-import { beltColors } from '../../styles/theme';
 
 export const GRID_SIZE = 20;
 const FOODS_PER_BELT = 5;
@@ -9,16 +8,37 @@ const SPEED_STEP_MS = 15;
 
 export type Direction = 'up' | 'down' | 'left' | 'right';
 export type Status = 'idle' | 'playing' | 'paused' | 'gameover';
+
 export interface Cell {
   x: number;
   y: number;
 }
+
+export interface SnakeBelt {
+  name: string;
+  hex: string;
+  glow: string;
+  isBlack?: boolean;
+}
+
+// Premium-Palette (sattere Farben statt flach), pro Belt mit eigenem Glow.
+// Schwarz-Gurt: heller als der BG (#0f0f0f), gepaart mit beiger Stickerei beim Render.
+export const SNAKE_BELTS: SnakeBelt[] = [
+  { name: 'Weiß', hex: '#e8e0d4', glow: 'rgba(232, 224, 212, 0.35)' },
+  { name: 'Gelb', hex: '#d4a017', glow: 'rgba(212, 160, 23, 0.40)' },
+  { name: 'Orange', hex: '#c4652a', glow: 'rgba(196, 101, 42, 0.40)' },
+  { name: 'Grün', hex: '#2a7d47', glow: 'rgba(42, 125, 71, 0.40)' },
+  { name: 'Blau', hex: '#2454a0', glow: 'rgba(36, 84, 160, 0.45)' },
+  { name: 'Braun', hex: '#6b3a2a', glow: 'rgba(107, 58, 42, 0.40)' },
+  { name: 'Schwarz', hex: '#2a2a2a', glow: 'rgba(212, 201, 181, 0.30)', isBlack: true },
+];
 
 export interface SnakeState {
   snake: Cell[];
   segmentColors: string[];
   food: Cell;
   obstacles: Cell[];
+  obstaclesAt: number; // performance.now() beim letzten Obstacle-Update — für Fade-In
   direction: Direction;
   pendingDirection: Direction;
   status: Status;
@@ -27,6 +47,10 @@ export interface SnakeState {
   beltIndex: number;
   foodsToNextBelt: number;
   speedMs: number;
+  wrapAround: boolean;
+  // Für Particles + Game-Over-Animation:
+  lastEatAt: { cell: Cell; at: number } | null;
+  gameOverAt: number | null;
 }
 
 type Action =
@@ -35,7 +59,9 @@ type Action =
   | { type: 'turn'; direction: Direction }
   | { type: 'pause' }
   | { type: 'resume' }
-  | { type: 'reset' };
+  | { type: 'reset' }
+  | { type: 'giveUp' }
+  | { type: 'setWrapAround'; wrap: boolean };
 
 function eq(a: Cell, b: Cell) {
   return a.x === b.x && a.y === b.y;
@@ -56,6 +82,13 @@ function step(c: Cell, d: Direction): Cell {
     case 'right':
       return { x: c.x + 1, y: c.y };
   }
+}
+
+function wrap(c: Cell): Cell {
+  return {
+    x: ((c.x % GRID_SIZE) + GRID_SIZE) % GRID_SIZE,
+    y: ((c.y % GRID_SIZE) + GRID_SIZE) % GRID_SIZE,
+  };
 }
 
 function randomFreeCell(taken: Cell[]): Cell {
@@ -79,7 +112,7 @@ function makeObstacles(level: number, taken: Cell[]): Cell[] {
   return out;
 }
 
-function init(): SnakeState {
+function init(wrapAround = false): SnakeState {
   const snake: Cell[] = [
     { x: 10, y: 10 },
     { x: 9, y: 10 },
@@ -87,9 +120,10 @@ function init(): SnakeState {
   ];
   return {
     snake,
-    segmentColors: snake.map(() => beltColors[0].hex),
+    segmentColors: snake.map(() => SNAKE_BELTS[0].hex),
     food: randomFreeCell(snake),
     obstacles: [],
+    obstaclesAt: 0,
     direction: 'right',
     pendingDirection: 'right',
     status: 'idle',
@@ -98,21 +132,31 @@ function init(): SnakeState {
     beltIndex: 0,
     foodsToNextBelt: FOODS_PER_BELT,
     speedMs: INITIAL_SPEED_MS,
+    wrapAround,
+    lastEatAt: null,
+    gameOverAt: null,
   };
 }
 
 function reducer(state: SnakeState, action: Action): SnakeState {
   switch (action.type) {
     case 'reset':
-      return init();
+      return init(state.wrapAround);
     case 'start':
-      return { ...init(), status: 'playing' };
+      return { ...init(state.wrapAround), status: 'playing' };
     case 'pause':
       return state.status === 'playing' ? { ...state, status: 'paused' } : state;
     case 'resume':
       return state.status === 'paused' ? { ...state, status: 'playing' } : state;
+    case 'giveUp':
+      if (state.status === 'playing' || state.status === 'paused') {
+        return { ...state, status: 'gameover', gameOverAt: performance.now() };
+      }
+      return state;
+    case 'setWrapAround':
+      if (state.status !== 'idle') return state;
+      return { ...state, wrapAround: action.wrap };
     case 'turn': {
-      // Block reversing relative to the queued (next-tick) direction
       if (action.direction === opposite(state.pendingDirection)) return state;
       return { ...state, pendingDirection: action.direction };
     }
@@ -120,19 +164,27 @@ function reducer(state: SnakeState, action: Action): SnakeState {
       if (state.status !== 'playing') return state;
 
       const direction = state.pendingDirection;
-      const head = step(state.snake[0], direction);
+      let head = step(state.snake[0], direction);
 
-      const hitsWall =
+      const out =
         head.x < 0 || head.x >= GRID_SIZE || head.y < 0 || head.y >= GRID_SIZE;
+
+      if (out) {
+        if (state.wrapAround) {
+          head = wrap(head);
+        } else {
+          return { ...state, status: 'gameover', gameOverAt: performance.now() };
+        }
+      }
+
       const hitsSelf = state.snake.some((s) => eq(s, head));
       const hitsObstacle = state.obstacles.some((o) => eq(o, head));
-
-      if (hitsWall || hitsSelf || hitsObstacle) {
-        return { ...state, status: 'gameover' };
+      if (hitsSelf || hitsObstacle) {
+        return { ...state, status: 'gameover', gameOverAt: performance.now() };
       }
 
       const ate = eq(head, state.food);
-      const headColor = beltColors[state.beltIndex].hex;
+      const headColor = SNAKE_BELTS[state.beltIndex].hex;
 
       const newSnake = ate ? [head, ...state.snake] : [head, ...state.snake.slice(0, -1)];
       const newColors = ate
@@ -148,17 +200,18 @@ function reducer(state: SnakeState, action: Action): SnakeState {
         };
       }
 
-      // Ate: gain points, maybe advance belt + level + speed + obstacles
-      let { beltIndex, foodsToNextBelt, level, speedMs, obstacles } = state;
+      // Ate
+      let { beltIndex, foodsToNextBelt, level, speedMs, obstacles, obstaclesAt } = state;
       const points = 10 + beltIndex * 5;
       foodsToNextBelt -= 1;
 
       if (foodsToNextBelt <= 0) {
-        beltIndex = Math.min(beltIndex + 1, beltColors.length - 1);
+        beltIndex = Math.min(beltIndex + 1, SNAKE_BELTS.length - 1);
         foodsToNextBelt = FOODS_PER_BELT;
         level += 1;
         speedMs = Math.max(MIN_SPEED_MS, speedMs - SPEED_STEP_MS);
         obstacles = makeObstacles(level, newSnake);
+        obstaclesAt = performance.now();
       }
 
       const food = randomFreeCell([...newSnake, ...obstacles]);
@@ -170,18 +223,20 @@ function reducer(state: SnakeState, action: Action): SnakeState {
         direction,
         food,
         obstacles,
+        obstaclesAt,
         score: state.score + points,
         beltIndex,
         foodsToNextBelt,
         level,
         speedMs,
+        lastEatAt: { cell: state.food, at: performance.now() },
       };
     }
   }
 }
 
 export function useSnakeGame() {
-  const [state, dispatch] = useReducer(reducer, undefined, init);
+  const [state, dispatch] = useReducer(reducer, undefined, () => init(false));
 
   useEffect(() => {
     if (state.status !== 'playing') return;
@@ -193,10 +248,15 @@ export function useSnakeGame() {
   const reset = useCallback(() => dispatch({ type: 'reset' }), []);
   const pause = useCallback(() => dispatch({ type: 'pause' }), []);
   const resume = useCallback(() => dispatch({ type: 'resume' }), []);
+  const giveUp = useCallback(() => dispatch({ type: 'giveUp' }), []);
+  const setWrapAround = useCallback(
+    (wrap: boolean) => dispatch({ type: 'setWrapAround', wrap }),
+    [],
+  );
   const turn = useCallback(
     (direction: Direction) => dispatch({ type: 'turn', direction }),
     [],
   );
 
-  return { state, start, reset, pause, resume, turn };
+  return { state, start, reset, pause, resume, giveUp, setWrapAround, turn };
 }
