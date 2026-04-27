@@ -1,75 +1,102 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   COLS,
-  PIECE_COLORS,
-  PIECE_SHAPES,
   ROWS,
   useTetrisGame,
+  type Cell,
+  type Piece,
   type PieceType,
 } from './useTetrisGame';
-import GameOverModal from '../../components/GameOverModal';
-import { beltColors } from '../../styles/theme';
+import {
+  BELT_LEVELS,
+  COMBO_TEXT_MS,
+  LEVELUP_MS,
+  LINE_TEXT_MS,
+  PIECE_META,
+  PIECE_TYPES,
+  ratingForLines,
+  lineTextForCount,
+  comboMultiplier,
+  STACKOUT_MS,
+  FLASH_MS,
+} from './tetrisConstants';
+import { drawBoard, drawPiecePreview } from './tetrisRenderer';
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
 import { useAuth } from '../../hooks/useAuth';
 
-function TouchKey({
-  children,
-  onClick,
-  label,
-  variant = 'primary',
-  className = '',
+const HIGHSCORE_KEY = 'randori-pro-arcade.tetris.highscore';
+const UNLOCK_KEY = 'randori-pro-arcade.tetris.unlocked-level';
+
+// ────────────────────────────────────────────────────────────────────────────
+// Ghost-Piece Hilfsfunktion
+// ────────────────────────────────────────────────────────────────────────────
+function ghostFor(board: Cell[][], piece: Piece): Piece {
+  let y = piece.y;
+  while (true) {
+    let collides = false;
+    for (let r = 0; r < piece.shape.length && !collides; r++) {
+      for (let c = 0; c < piece.shape[r].length && !collides; c++) {
+        if (!piece.shape[r][c]) continue;
+        const bx = piece.x + c;
+        const by = y + 1 + r;
+        if (bx < 0 || bx >= COLS || by >= ROWS) collides = true;
+        else if (by >= 0 && board[by][bx] !== 0) collides = true;
+      }
+    }
+    if (collides) break;
+    y++;
+  }
+  return { ...piece, y };
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// UI-Helper-Komponenten
+// ────────────────────────────────────────────────────────────────────────────
+
+function BeltProgressBar({
+  beltIndex,
+  lines,
+  startBeltIndex,
 }: {
-  children: React.ReactNode;
-  onClick: () => void;
-  label: string;
-  variant?: 'primary' | 'muted' | 'accent';
-  className?: string;
+  beltIndex: number;
+  lines: number;
+  startBeltIndex: number;
 }) {
-  const base =
-    'flex items-center justify-center h-14 rounded-xl text-lg font-bold transition-all duration-rp active:scale-95 select-none';
-  const skin = {
-    primary: 'bg-[rgba(220,13,29,0.6)] text-white active:bg-rp-rot',
-    muted:
-      'bg-[rgba(212,201,181,0.08)] text-rp-text-secondary active:bg-[rgba(212,201,181,0.15)] active:text-white',
-    accent:
-      'bg-[rgba(220,13,29,0.85)] text-white active:bg-rp-rot uppercase text-sm tracking-rp-wide font-semibold',
-  }[variant];
+  const linesInLevel = lines - (beltIndex - startBeltIndex) * 8;
+  const progress = Math.min(1, Math.max(0, linesInLevel / 8));
   return (
-    <button
-      onClick={onClick}
-      onContextMenu={(e) => e.preventDefault()}
-      className={`${base} ${skin} ${className}`}
-      aria-label={label}
-    >
-      {children}
-    </button>
+    <div className="grid grid-cols-10 gap-1 w-full">
+      {BELT_LEVELS.map((b, i) => {
+        const filled = i < beltIndex ? 1 : i === beltIndex ? progress : 0;
+        const isCurrent = i === beltIndex;
+        return (
+          <div
+            key={b.level}
+            className="relative h-1.5 rounded-full overflow-hidden"
+            style={{
+              background: 'rgba(212, 201, 181, 0.06)',
+              opacity: i <= beltIndex ? 1 : 0.35,
+            }}
+            title={b.name}
+          >
+            <div
+              className="absolute inset-y-0 left-0 rounded-full transition-all duration-500 ease-out"
+              style={{
+                width: `${filled * 100}%`,
+                background: b.hex,
+                border: b.isBlack ? '1px solid #d4c9b5' : 'none',
+                boxShadow: isCurrent && filled > 0 ? `0 0 8px ${b.glow}` : undefined,
+              }}
+            />
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
-function trimShape(shape: number[][]): number[][] {
-  let top = shape.length,
-    bot = -1,
-    left = shape[0].length,
-    right = -1;
-  for (let r = 0; r < shape.length; r++) {
-    for (let c = 0; c < shape[r].length; c++) {
-      if (shape[r][c]) {
-        if (r < top) top = r;
-        if (r > bot) bot = r;
-        if (c < left) left = c;
-        if (c > right) right = c;
-      }
-    }
-  }
-  if (bot < 0) return shape;
-  const out: number[][] = [];
-  for (let r = top; r <= bot; r++) {
-    out.push(shape[r].slice(left, right + 1));
-  }
-  return out;
-}
-
-function NextPieceCanvas({ type }: { type: PieceType }) {
+function NextPiecePanel({ type }: { type: PieceType }) {
   const ref = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
@@ -77,7 +104,6 @@ function NextPieceCanvas({ type }: { type: PieceType }) {
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-
     const dpr = window.devicePixelRatio || 1;
     const cssSize = canvas.clientWidth;
     if (cssSize === 0) return;
@@ -87,64 +113,99 @@ function NextPieceCanvas({ type }: { type: PieceType }) {
       canvas.height = px;
     }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, cssSize, cssSize);
-
-    const shape = trimShape(PIECE_SHAPES[type]);
-    const cols = shape[0].length;
-    const rows = shape.length;
-    const cell = Math.floor(Math.min(cssSize / cols, cssSize / rows) * 0.8);
-    const offX = (cssSize - cols * cell) / 2;
-    const offY = (cssSize - rows * cell) / 2;
-    const color = PIECE_COLORS[type];
-
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        if (!shape[r][c]) continue;
-        ctx.fillStyle = color;
-        ctx.fillRect(offX + c * cell + 1, offY + r * cell + 1, cell - 2, cell - 2);
-        ctx.strokeStyle = 'rgba(0,0,0,0.4)';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(offX + c * cell + 1, offY + r * cell + 1, cell - 2, cell - 2);
-      }
-    }
+    drawPiecePreview(ctx, cssSize, cssSize, type);
   }, [type]);
 
+  const meta = PIECE_META[type];
   return (
-    <canvas
-      ref={ref}
-      className="w-full"
-      style={{ aspectRatio: '1 / 1' }}
-      aria-label={`Nächste Technik: ${type}`}
-    />
+    <div className="flex flex-col items-center gap-1.5">
+      <p className="text-[11px] uppercase tracking-rp-display text-rp-text-muted font-medium">
+        Nächste Technik
+      </p>
+      <div className="text-3xl text-rp-text-secondary opacity-60 leading-none font-serif">
+        {meta.kanji}
+      </div>
+      <div className="w-full max-w-[100px]">
+        <canvas
+          ref={ref}
+          className="w-full"
+          style={{ aspectRatio: '1 / 1' }}
+          aria-label={`Nächste Technik: ${meta.technique}`}
+        />
+      </div>
+      <p
+        className="text-[11px] uppercase tracking-rp-display text-rp-text-secondary font-semibold mt-0.5"
+        style={{ letterSpacing: '0.08em' }}
+      >
+        {meta.technique}
+      </p>
+    </div>
   );
 }
 
-function Stat({
-  label,
-  value,
-  accent,
-}: {
-  label: string;
-  value: string | number;
-  accent?: boolean;
-}) {
+function TechniqueLegend() {
   return (
-    <span className="flex items-baseline gap-2 whitespace-nowrap">
-      <span className="text-rp-text-muted uppercase tracking-rp-tight text-[11px] font-medium">
-        {label}
-      </span>
-      <span
-        className={
-          accent
-            ? 'rp-mono text-rp-rot text-2xl font-bold'
-            : 'rp-mono text-white font-semibold'
-        }
-      >
-        {value}
-      </span>
-    </span>
+    <div className="grid grid-cols-7 gap-2 w-full">
+      {PIECE_TYPES.map((t) => {
+        const m = PIECE_META[t];
+        return (
+          <div key={t} className="flex flex-col items-center gap-0.5">
+            <span
+              className="block w-full h-1 rounded-full"
+              style={{ background: m.color, boxShadow: `0 0 6px ${m.glow}` }}
+            />
+            <span
+              className="text-2xl font-serif"
+              style={{ color: m.color, opacity: 0.85 }}
+            >
+              {m.kanji}
+            </span>
+            <span className="text-[9px] sm:text-[10px] uppercase tracking-rp-tight text-rp-text-muted text-center leading-tight">
+              {m.technique}
+            </span>
+          </div>
+        );
+      })}
+    </div>
   );
 }
+
+function TouchButton({
+  onClick,
+  label,
+  children,
+  primary = false,
+}: {
+  onClick: () => void;
+  label: string;
+  children: React.ReactNode;
+  primary?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      onContextMenu={(e) => e.preventDefault()}
+      className="flex items-center justify-center text-rp-text-secondary transition-all duration-rp active:scale-95 active:text-white select-none"
+      style={{
+        height: 48,
+        borderRadius: 10,
+        background: primary
+          ? 'rgba(220, 13, 29, 0.15)'
+          : 'rgba(30, 30, 30, 0.8)',
+        border: primary
+          ? '1px solid rgba(220, 13, 29, 0.4)'
+          : '1px solid rgba(212, 201, 181, 0.12)',
+      }}
+      aria-label={label}
+    >
+      {children}
+    </button>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// TetrisGame
+// ────────────────────────────────────────────────────────────────────────────
 
 export default function TetrisGame() {
   const boardRef = useRef<HTMLCanvasElement | null>(null);
@@ -162,8 +223,130 @@ export default function TetrisGame() {
   } = useTetrisGame();
   const { user } = useAuth();
   const [saved, setSaved] = useState(false);
+  const [bestScore, setBestScore] = useState(0);
+  const [unlockedLevel, setUnlockedLevel] = useState(1);
+  const [isNewHigh, setIsNewHigh] = useState(false);
 
-  // Render board
+  // Refs für Render-Loop (vermeiden re-init)
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const stackOutAtRef = useRef<number | null>(null);
+
+  // Transient Overlays (DOM)
+  const [lineText, setLineText] = useState<{
+    rows: number;
+    id: number;
+  } | null>(null);
+  const [comboText, setComboText] = useState<{ combo: number; id: number } | null>(
+    null,
+  );
+  const [levelUpBanner, setLevelUpBanner] = useState<{
+    level: number;
+    id: number;
+  } | null>(null);
+  const overlayIdRef = useRef(0);
+
+  // Highscore + Unlock laden
+  useEffect(() => {
+    try {
+      const hs = window.localStorage.getItem(HIGHSCORE_KEY);
+      if (hs) setBestScore(Math.max(0, parseInt(hs, 10) || 0));
+      const ul = window.localStorage.getItem(UNLOCK_KEY);
+      if (ul) setUnlockedLevel(Math.min(10, Math.max(1, parseInt(ul, 10) || 1)));
+    } catch {
+      // ignorieren
+    }
+  }, []);
+
+  // Linie-Clear: Text-Overlay starten
+  const lastClearKeyRef = useRef('');
+  useEffect(() => {
+    if (state.status !== 'lineflash') return;
+    const key = `${state.flashStartedAt}-${state.lastClearCount}`;
+    if (key === lastClearKeyRef.current) return;
+    lastClearKeyRef.current = key;
+    const id = ++overlayIdRef.current;
+    setLineText({ rows: state.lastClearCount, id });
+    window.setTimeout(() => {
+      setLineText((cur) => (cur && cur.id === id ? null : cur));
+    }, LINE_TEXT_MS);
+
+    if (state.combo >= 2) {
+      const cid = ++overlayIdRef.current;
+      setComboText({ combo: state.combo, id: cid });
+      window.setTimeout(() => {
+        setComboText((cur) => (cur && cur.id === cid ? null : cur));
+      }, COMBO_TEXT_MS);
+    }
+  }, [state.status, state.flashStartedAt, state.lastClearCount, state.combo]);
+
+  // Level-Up Banner (wenn beltIndex steigt während des Spiels)
+  const lastBeltRef = useRef(state.beltIndex);
+  useEffect(() => {
+    if (state.beltIndex > lastBeltRef.current && state.status !== 'idle') {
+      const id = ++overlayIdRef.current;
+      setLevelUpBanner({ level: state.level, id });
+      window.setTimeout(() => {
+        setLevelUpBanner((cur) => (cur && cur.id === id ? null : cur));
+      }, LEVELUP_MS);
+    }
+    lastBeltRef.current = state.beltIndex;
+  }, [state.beltIndex, state.level, state.status]);
+
+  // Game Over: Stack-Out Timestamp + Highscore-Save + Unlock-Update
+  useEffect(() => {
+    if (state.status !== 'gameover') {
+      stackOutAtRef.current = null;
+      if (saved) setSaved(false);
+      if (isNewHigh) setIsNewHigh(false);
+      return;
+    }
+    if (saved) return;
+    setSaved(true);
+    stackOutAtRef.current = performance.now();
+
+    const newHigh = state.score > bestScore;
+    setIsNewHigh(newHigh);
+    if (newHigh) {
+      setBestScore(state.score);
+      try {
+        window.localStorage.setItem(HIGHSCORE_KEY, String(state.score));
+      } catch {
+        // ignorieren
+      }
+    }
+
+    if (state.level > unlockedLevel) {
+      setUnlockedLevel(state.level);
+      try {
+        window.localStorage.setItem(UNLOCK_KEY, String(state.level));
+      } catch {
+        // ignorieren
+      }
+    }
+
+    if (isSupabaseConfigured && user && state.score > 0) {
+      supabase
+        .from('highscores')
+        .insert({
+          user_id: user.id,
+          game: 'tetris',
+          score: state.score,
+          level: state.level,
+          metadata: {
+            lines: state.lines,
+            belt: BELT_LEVELS[state.beltIndex].name,
+            start_belt: BELT_LEVELS[state.startBeltIndex].name,
+            rating: ratingForLines(state.lines).name,
+          },
+        })
+        .then(({ error }) => {
+          if (error) console.error('[Tetris] Highscore save failed:', error.message);
+        });
+    }
+  }, [state.status, state.score, state.level, state.lines, state.beltIndex, state.startBeltIndex, user, saved, bestScore, unlockedLevel, isNewHigh]);
+
+  // Render-Loop (rAF — läuft immer, liest stateRef)
   const draw = useCallback(() => {
     const canvas = boardRef.current;
     if (!canvas) return;
@@ -174,7 +357,6 @@ export default function TetrisGame() {
     const cssWidth = canvas.clientWidth;
     const cssHeight = canvas.clientHeight;
     if (cssWidth === 0) return;
-
     const wPx = Math.floor(cssWidth * dpr);
     const hPx = Math.floor(cssHeight * dpr);
     if (canvas.width !== wPx || canvas.height !== hPx) {
@@ -183,77 +365,60 @@ export default function TetrisGame() {
     }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    const cellW = cssWidth / COLS;
-    const cellH = cssHeight / ROWS;
+    const s = stateRef.current;
+    const now = performance.now();
 
-    // BG
-    ctx.fillStyle = '#0f0f0f';
-    ctx.fillRect(0, 0, cssWidth, cssHeight);
-
-    // Grid
-    ctx.strokeStyle = 'rgba(212, 201, 181, 0.05)';
-    ctx.lineWidth = 1;
-    for (let c = 1; c < COLS; c++) {
-      ctx.beginPath();
-      ctx.moveTo(c * cellW, 0);
-      ctx.lineTo(c * cellW, cssHeight);
-      ctx.stroke();
-    }
-    for (let r = 1; r < ROWS; r++) {
-      ctx.beginPath();
-      ctx.moveTo(0, r * cellH);
-      ctx.lineTo(cssWidth, r * cellH);
-      ctx.stroke();
-    }
-
-    // Locked cells
-    for (let r = 0; r < ROWS; r++) {
-      for (let c = 0; c < COLS; c++) {
-        const v = state.board[r][c];
-        if (v) {
-          ctx.fillStyle = v as string;
-          ctx.fillRect(c * cellW + 1, r * cellH + 1, cellW - 2, cellH - 2);
-          ctx.strokeStyle = 'rgba(0,0,0,0.45)';
-          ctx.lineWidth = 1;
-          ctx.strokeRect(c * cellW + 1, r * cellH + 1, cellW - 2, cellH - 2);
-        }
+    // Flash-Phasen berechnen (60ms Flash + 220ms Kontraktion)
+    let flashAmount = 0;
+    let contractAmount = 0;
+    if (s.status === 'lineflash' && s.flashStartedAt > 0) {
+      const elapsed = now - s.flashStartedAt;
+      if (elapsed < 80) {
+        flashAmount = 1 - elapsed / 80;
+      }
+      if (elapsed >= 80 && elapsed < FLASH_MS) {
+        contractAmount = (elapsed - 80) / (FLASH_MS - 80);
+      } else if (elapsed >= FLASH_MS) {
+        contractAmount = 1;
       }
     }
 
-    // Active piece
-    if (state.piece) {
-      const color = PIECE_COLORS[state.piece.type];
-      for (let r = 0; r < state.piece.shape.length; r++) {
-        for (let c = 0; c < state.piece.shape[r].length; c++) {
-          if (!state.piece.shape[r][c]) continue;
-          const bx = state.piece.x + c;
-          const by = state.piece.y + r;
-          if (by < 0) continue;
-          ctx.fillStyle = color;
-          ctx.fillRect(bx * cellW + 1, by * cellH + 1, cellW - 2, cellH - 2);
-          ctx.strokeStyle = 'rgba(0,0,0,0.45)';
-          ctx.lineWidth = 1;
-          ctx.strokeRect(bx * cellW + 1, by * cellH + 1, cellW - 2, cellH - 2);
-        }
-      }
+    // Stack-Out (Game Over)
+    let stackOutAmount = 0;
+    if (s.status === 'gameover' && stackOutAtRef.current) {
+      stackOutAmount = Math.min(
+        1,
+        (now - stackOutAtRef.current) / STACKOUT_MS,
+      );
     }
 
-    // Flash overlay during line-clear
-    if (state.status === 'lineflash') {
-      ctx.fillStyle = 'rgba(220, 13, 29, 0.55)';
-      state.flashRows.forEach((r) => {
-        ctx.fillRect(0, r * cellH, cssWidth, cellH);
-      });
+    // Pause: Spielfeld ausblenden (kein Schummeln)
+    if (s.status === 'paused') {
+      ctx.fillStyle = '#0a0a0a';
+      ctx.fillRect(0, 0, cssWidth, cssHeight);
+      return;
     }
-  }, [state]);
 
-  // Schedule a draw on every state change AND on rAF while playing (to follow the live piece)
-  useEffect(() => {
-    draw();
-  }, [draw]);
+    // Ghost ab Belt 6 unsichtbar (mehr Skill nötig)
+    const showGhost = s.beltIndex < 5 && s.status === 'playing';
+    const ghost = s.piece && showGhost ? ghostFor(s.board, s.piece) : null;
+
+    drawBoard({
+      ctx,
+      cssWidth,
+      cssHeight,
+      board: s.board,
+      piece: s.piece,
+      ghost,
+      flashRows: s.flashRows,
+      flashAmount,
+      contractAmount,
+      stackOutAmount,
+      showGhost,
+    });
+  }, []);
 
   useEffect(() => {
-    if (state.status !== 'playing') return;
     let raf = 0;
     const loop = () => {
       draw();
@@ -261,7 +426,7 @@ export default function TetrisGame() {
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, [state.status, draw]);
+  }, [draw]);
 
   useEffect(() => {
     const onResize = () => draw();
@@ -269,186 +434,366 @@ export default function TetrisGame() {
     return () => window.removeEventListener('resize', onResize);
   }, [draw]);
 
-  // Keyboard controls
+  // Tastatur
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.repeat && (e.key === ' ' || e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W' || e.key === 'p' || e.key === 'P')) {
+      if (
+        e.repeat &&
+        (e.key === ' ' ||
+          e.key === 'ArrowUp' ||
+          e.key === 'w' ||
+          e.key === 'W' ||
+          e.key === 'p' ||
+          e.key === 'P' ||
+          e.key === 'Escape')
+      ) {
         return;
       }
+
+      if (e.key === ' ' && state.status === 'idle') {
+        e.preventDefault();
+        start(state.startBeltIndex);
+        return;
+      }
+      if (e.key === 'Escape' || e.key === 'p' || e.key === 'P') {
+        e.preventDefault();
+        if (state.status === 'playing') pause();
+        else if (state.status === 'paused') resume();
+        return;
+      }
+
+      if (state.status !== 'playing' && state.status !== 'lineflash') return;
+
       switch (e.key) {
         case 'ArrowLeft':
         case 'a':
         case 'A':
           e.preventDefault();
-          if (state.status === 'idle') start();
           left();
           return;
         case 'ArrowRight':
         case 'd':
         case 'D':
           e.preventDefault();
-          if (state.status === 'idle') start();
           right();
           return;
         case 'ArrowDown':
         case 's':
         case 'S':
           e.preventDefault();
-          if (state.status === 'idle') start();
           softDrop();
           return;
         case 'ArrowUp':
         case 'w':
         case 'W':
           e.preventDefault();
-          if (state.status === 'idle') start();
           rotate();
           return;
         case ' ':
           e.preventDefault();
-          if (state.status === 'idle') start();
-          else hardDrop();
-          return;
-        case 'p':
-        case 'P':
-          if (state.status === 'playing') pause();
-          else if (state.status === 'paused') resume();
+          hardDrop();
           return;
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [state.status, left, right, softDrop, rotate, hardDrop, start, pause, resume]);
+  }, [state.status, state.startBeltIndex, left, right, softDrop, rotate, hardDrop, start, pause, resume]);
 
-  // Highscore-Save bei Game Over
+  const beltDef = BELT_LEVELS[state.beltIndex];
+  const startBelt = BELT_LEVELS[state.startBeltIndex];
+  const lineTextCfg = useMemo(
+    () => (lineText ? lineTextForCount(lineText.rows) : null),
+    [lineText],
+  );
+  const showStartScreen = state.status === 'idle';
+  const showPauseScreen = state.status === 'paused';
+  const showGameOver =
+    state.status === 'gameover' &&
+    stackOutAtRef.current !== null &&
+    performance.now() - stackOutAtRef.current >= STACKOUT_MS - 50;
+
+  // gameOver „shown" zustand triggern via re-render. Nutzen rAF + State.
+  const [gameOverVisible, setGameOverVisible] = useState(false);
   useEffect(() => {
-    if (state.status === 'gameover' && !saved && isSupabaseConfigured && user && state.score > 0) {
-      setSaved(true);
-      supabase
-        .from('highscores')
-        .insert({
-          user_id: user.id,
-          game: 'tetris',
-          score: state.score,
-          level: state.level,
-          metadata: { lines: state.lines, belt: beltColors[state.beltIndex].name },
-        })
-        .then(({ error }) => {
-          if (error) console.error('[Tetris] Highscore save failed:', error.message);
-        });
+    if (state.status !== 'gameover') {
+      setGameOverVisible(false);
+      return;
     }
-    if (state.status !== 'gameover' && saved) setSaved(false);
-  }, [state.status, state.score, state.level, state.lines, state.beltIndex, user, saved]);
+    const id = window.setTimeout(() => setGameOverVisible(true), STACKOUT_MS);
+    return () => window.clearTimeout(id);
+  }, [state.status]);
 
-  const beltName = beltColors[state.beltIndex].name;
-  const showOss = state.status === 'lineflash';
-  const isQuad = showOss && state.lastClearCount === 4;
+  const gameOverScore = useScoreCounter(
+    state.score,
+    state.status === 'gameover' && gameOverVisible,
+  );
+  const rating = useMemo(() => ratingForLines(state.lines), [state.lines]);
+
+  const handleStart = (level: number) => {
+    start(Math.max(0, level - 1));
+  };
 
   return (
-    <div className="w-full max-w-[640px] flex flex-col gap-3 items-stretch">
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <Stat label="Techniken" value={state.lines} />
-        <Stat label="Punkte" value={state.score} accent />
-        <Stat label="Rang" value={beltName} />
-      </div>
+    <div className="w-full flex flex-col gap-3 sm:gap-4">
+      {/* Belt-Progress (full width, horizontal) */}
+      <BeltProgressBar
+        beltIndex={state.beltIndex}
+        lines={state.lines}
+        startBeltIndex={state.startBeltIndex}
+      />
 
-      <div className="flex items-start gap-3 sm:gap-4 justify-center">
-        <div
-          className="relative shrink-0"
-          style={{ width: 'min(60vw, 280px)', aspectRatio: '10 / 20' }}
-        >
-          <canvas
-            ref={boardRef}
-            className="absolute inset-0 w-full h-full border border-[rgba(212,201,181,0.25)] rounded-rp-md"
-            aria-label="Tetris-Spielfeld"
-          />
-          {showOss && (
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none rp-anim-fade">
-              <span
-                className="rp-display text-white text-center px-4 leading-none"
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_180px] gap-4 items-start">
+        {/* Board-Spalte */}
+        <div className="flex flex-col items-center gap-3 w-full">
+          <div className="relative shrink-0" style={{ width: 'min(70vw, 320px)', aspectRatio: '10 / 20' }}>
+            <canvas
+              ref={boardRef}
+              className="absolute inset-0 w-full h-full rounded-rp-md"
+              style={{ border: '1px solid rgba(212, 201, 181, 0.12)' }}
+              aria-label="Tetris-Spielfeld"
+            />
+
+            {/* Linien-Clear Text */}
+            {lineText && lineTextCfg && state.status !== 'idle' && (
+              <div
+                className="absolute inset-0 flex items-center justify-center pointer-events-none rp-anim-fade"
+                key={lineText.id}
+              >
+                <span
+                  className="rp-display text-center px-4 leading-none"
+                  style={{
+                    color: lineTextCfg.color,
+                    fontSize: lineTextCfg.size,
+                    letterSpacing: '0.08em',
+                    textShadow: lineTextCfg.withGlow
+                      ? `0 0 24px ${lineTextCfg.color}, 0 0 8px rgba(0,0,0,0.8)`
+                      : '0 0 8px rgba(0,0,0,0.8)',
+                    animation: lineTextCfg.withShake
+                      ? 'rp-shake 200ms ease-out'
+                      : undefined,
+                  }}
+                >
+                  {lineTextCfg.text}
+                </span>
+              </div>
+            )}
+
+            {/* Combo */}
+            {comboText && (
+              <div
+                className="absolute top-3 right-3 pointer-events-none rp-anim-fade"
+                key={`c-${comboText.id}`}
+              >
+                <span
+                  className="rp-display"
+                  style={{
+                    color: '#dc0d1d',
+                    fontSize: `${20 + Math.min(comboText.combo, 5) * 2}px`,
+                    letterSpacing: '0.08em',
+                    textShadow: '0 0 12px rgba(220,13,29,0.7)',
+                  }}
+                >
+                  {comboText.combo}× COMBO
+                </span>
+              </div>
+            )}
+
+            {/* Level-Up */}
+            {levelUpBanner && (
+              <div
+                className="absolute top-1/3 left-0 right-0 pointer-events-none text-center rp-anim-fade"
+                key={`l-${levelUpBanner.id}`}
+              >
+                <p
+                  className="rp-display"
+                  style={{
+                    fontSize: 'clamp(20px, 5.5vw, 28px)',
+                    color: BELT_LEVELS[levelUpBanner.level - 1]?.hex ?? '#d4c9b5',
+                    letterSpacing: '0.1em',
+                    textShadow: `0 0 16px ${BELT_LEVELS[levelUpBanner.level - 1]?.glow ?? 'rgba(255,255,255,0.5)'}`,
+                  }}
+                >
+                  Aufstieg: {BELT_LEVELS[levelUpBanner.level - 1]?.shortName}
+                </p>
+              </div>
+            )}
+
+            {/* Start-Screen */}
+            {showStartScreen && (
+              <StartScreen
+                bestScore={bestScore}
+                unlockedLevel={unlockedLevel}
+                onStart={handleStart}
+              />
+            )}
+
+            {/* Pause */}
+            {showPauseScreen && (
+              <div
+                className="absolute inset-0 rounded-rp-md flex items-center justify-center p-4"
                 style={{
-                  fontSize: isQuad ? 'clamp(28px, 8vw, 48px)' : 'clamp(48px, 14vw, 88px)',
-                  letterSpacing: '0.08em',
-                  textShadow:
-                    '0 0 24px rgba(220,13,29,0.9), 0 0 8px rgba(0,0,0,0.8)',
+                  background: 'rgba(0,0,0,0.85)',
+                  backdropFilter: 'blur(4px)',
                 }}
               >
-                {isQuad ? (
-                  <>
-                    TECHNIK
-                    <br />
-                    PERFEKT!
-                  </>
-                ) : (
-                  'OSS!'
-                )}
-              </span>
-            </div>
-          )}
-          {state.status === 'idle' && (
-            <button
-              onClick={start}
-              className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center rounded-rp-md"
-              aria-label="Spiel starten"
-            >
-              <span className="rp-btn">Spielen</span>
-            </button>
-          )}
-          {state.status === 'paused' && (
-            <button
-              onClick={resume}
-              className="absolute inset-0 bg-black/70 backdrop-blur-sm flex flex-col items-center justify-center rounded-rp-md gap-3"
-              aria-label="Fortsetzen"
-            >
-              <span
-                className="rp-display text-rp-beige text-2xl"
-                style={{ letterSpacing: '0.12em' }}
-              >
-                Pause
-              </span>
-              <span className="rp-btn">Fortsetzen</span>
-            </button>
-          )}
+                <div className="flex flex-col items-center gap-3 text-center max-w-[260px]">
+                  <h2
+                    className="rp-display text-white"
+                    style={{ fontSize: '40px', letterSpacing: '0.12em' }}
+                  >
+                    Pause
+                  </h2>
+                  <p className="text-rp-text-secondary text-sm">
+                    Eine gute Kata braucht Geduld.
+                  </p>
+                  <div className="flex flex-col gap-2 w-full mt-2">
+                    <button onClick={resume} className="rp-btn w-full">
+                      Fortsetzen
+                    </button>
+                    <button
+                      onClick={() => {
+                        reset();
+                      }}
+                      className="rp-btn-secondary w-full"
+                    >
+                      Aufgeben
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Game Over Overlay (nach Stack-Out) */}
+            {showGameOver && gameOverVisible && (
+              <div className="absolute inset-0 rounded-rp-md flex items-center justify-center p-4 sm:p-6 rp-anim-fade">
+                <div className="flex flex-col items-center text-center gap-3 max-w-[300px]">
+                  <h2
+                    className="rp-display"
+                    style={{ fontSize: '32px', color: '#dc0d1d', letterSpacing: '0.1em' }}
+                  >
+                    Game Over
+                  </h2>
+                  <div>
+                    <p className="text-[11px] uppercase tracking-rp-display text-rp-text-muted font-medium">
+                      Punkte
+                    </p>
+                    <p
+                      className="rp-mono text-white font-bold leading-none mt-1"
+                      style={{ fontSize: '44px' }}
+                    >
+                      {gameOverScore}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="block w-10 h-1.5 rounded-full"
+                      style={{
+                        background: beltDef.hex,
+                        border: beltDef.isBlack ? '1px solid #d4c9b5' : 'none',
+                      }}
+                    />
+                    <span className="text-xs uppercase tracking-rp-tight text-rp-text-secondary font-semibold">
+                      {beltDef.shortName}
+                    </span>
+                  </div>
+                  <p className="text-rp-text-secondary text-sm">
+                    <span className="rp-mono text-white font-semibold">
+                      {state.lines}
+                    </span>{' '}
+                    Techniken gemeistert
+                  </p>
+                  <p
+                    className="rp-display text-rp-beige uppercase"
+                    style={{ fontSize: '16px', letterSpacing: '0.12em' }}
+                  >
+                    {rating.name}
+                  </p>
+                  {isNewHigh && state.score > 0 && (
+                    <p
+                      className="rp-display rp-pulse-glow text-xl"
+                      style={{ color: '#d4a017', letterSpacing: '0.1em' }}
+                    >
+                      Neuer Rekord!
+                    </p>
+                  )}
+                  <div className="flex flex-col gap-2 w-full mt-1">
+                    <button
+                      onClick={() => start(state.startBeltIndex)}
+                      className="rp-btn w-full"
+                    >
+                      Nochmal
+                    </button>
+                    <Link to="/" className="rp-btn-secondary w-full">
+                      Zurück
+                    </Link>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
-        <aside className="flex flex-col gap-3 w-24 sm:w-32 shrink-0">
-          <div>
-            <p className="text-[10px] sm:text-[11px] uppercase tracking-rp-display text-rp-text-muted font-medium mb-2">
-              Nächste Technik
-            </p>
-            <div className="rp-panel p-2 sm:p-3">
-              <NextPieceCanvas type={state.next} />
-            </div>
+        {/* Side-Panel */}
+        <aside className="flex flex-col gap-4 w-full">
+          <NextPiecePanel type={state.next} />
+
+          <div className="border-t border-[rgba(212,201,181,0.08)] pt-3 flex flex-col gap-2">
+            <PanelStat label="Punkte" value={state.score} accent />
+            <PanelStat label="Techniken" value={state.lines} />
+            <PanelStat label="Combo" value={state.combo > 1 ? `${state.combo}× (×${comboMultiplier(state.combo)})` : '—'} />
           </div>
-          <div>
-            <p className="text-[10px] sm:text-[11px] uppercase tracking-rp-display text-rp-text-muted font-medium mb-2">
-              Level
+
+          <div className="border-t border-[rgba(212,201,181,0.08)] pt-3">
+            <p className="text-[11px] uppercase tracking-rp-display text-rp-text-muted font-medium">
+              Rang
             </p>
-            <div className="rp-panel p-3 text-center">
-              <span className="rp-mono text-2xl font-bold text-white">
-                {state.level}
+            <div className="flex items-center gap-2 mt-1.5">
+              <span
+                className="block w-6 h-1.5 rounded-full"
+                style={{
+                  background: beltDef.hex,
+                  border: beltDef.isBlack ? '1px solid #d4c9b5' : 'none',
+                  boxShadow: `0 0 6px ${beltDef.glow}`,
+                }}
+              />
+              <span className="text-white font-semibold text-sm">
+                {beltDef.shortName}
               </span>
             </div>
+            {state.startBeltIndex > 0 && (
+              <p className="text-[10px] text-rp-text-muted mt-1">
+                Start: {startBelt.shortName}
+              </p>
+            )}
+          </div>
+
+          <div className="border-t border-[rgba(212,201,181,0.08)] pt-3 hidden lg:block">
+            <p className="text-[11px] uppercase tracking-rp-display text-rp-text-muted font-medium mb-2">
+              Steuerung
+            </p>
+            <ul className="text-[12px] text-rp-text-secondary leading-relaxed rp-mono">
+              <li>← → bewegen</li>
+              <li>↑ rotieren</li>
+              <li>↓ schneller</li>
+              <li>⎵ fallenlassen</li>
+              <li>Esc pause</li>
+            </ul>
           </div>
         </aside>
       </div>
 
-      {/* Touch controls */}
-      <div className="grid grid-cols-5 gap-2 sm:hidden mt-2">
-        <TouchKey label="Links" onClick={left}>◀</TouchKey>
-        <TouchKey label="Rotieren" onClick={rotate} variant="muted">↻</TouchKey>
-        <TouchKey label="Rechts" onClick={right}>▶</TouchKey>
-        <TouchKey label="Soft Drop" onClick={softDrop} variant="muted">▼</TouchKey>
-        <TouchKey label="Hard Drop" onClick={hardDrop} variant="accent">DROP</TouchKey>
+      {/* Mobile Touch Buttons */}
+      <div className="grid grid-cols-5 gap-2 lg:hidden">
+        <TouchButton onClick={left} label="Links">←</TouchButton>
+        <TouchButton onClick={rotate} label="Rotieren">↻</TouchButton>
+        <TouchButton onClick={right} label="Rechts">→</TouchButton>
+        <TouchButton onClick={softDrop} label="Soft Drop">↓</TouchButton>
+        <TouchButton onClick={hardDrop} label="Hard Drop" primary>⤓</TouchButton>
       </div>
-
-      <p className="hidden sm:block text-xs text-rp-text-muted rp-mono text-center">
-        ← → bewegen · ↑ rotieren · ↓ soft drop · Space hard drop · P pausiert
-      </p>
 
       {!isSupabaseConfigured && (
         <p className="text-xs text-rp-text-muted text-center">
-          Gast-Modus: Highscores werden nicht gespeichert.
+          Gast-Modus: Highscores werden nicht in der Cloud gespeichert.
         </p>
       )}
       {isSupabaseConfigured && !user && (
@@ -456,17 +801,156 @@ export default function TetrisGame() {
           Logge dich ein, um deinen Highscore zu speichern.
         </p>
       )}
-
-      <GameOverModal
-        open={state.status === 'gameover'}
-        score={state.score}
-        level={state.level}
-        gameTitle="Kata Blocks"
-        onRestart={() => {
-          reset();
-          start();
-        }}
-      />
     </div>
   );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Subkomponenten
+// ────────────────────────────────────────────────────────────────────────────
+
+function PanelStat({
+  label,
+  value,
+  accent,
+}: {
+  label: string;
+  value: string | number;
+  accent?: boolean;
+}) {
+  return (
+    <div className="flex items-baseline justify-between gap-2">
+      <span className="text-[11px] uppercase tracking-rp-display text-rp-text-muted font-medium">
+        {label}
+      </span>
+      <span
+        className={
+          accent
+            ? 'rp-mono text-rp-rot font-bold text-lg'
+            : 'rp-mono text-white font-semibold text-sm'
+        }
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function StartScreen({
+  bestScore,
+  unlockedLevel,
+  onStart,
+}: {
+  bestScore: number;
+  unlockedLevel: number;
+  onStart: (level: number) => void;
+}) {
+  const [selectedLevel, setSelectedLevel] = useState(1);
+  const safeUnlocked = Math.min(10, Math.max(1, unlockedLevel));
+
+  return (
+    <div
+      className="absolute inset-0 rounded-rp-md flex flex-col p-4 sm:p-5 overflow-y-auto"
+      style={{ background: 'rgba(0,0,0,0.78)', backdropFilter: 'blur(8px)' }}
+    >
+      <div className="flex flex-col items-center text-center gap-3 my-auto">
+        <h2
+          className="rp-display text-white"
+          style={{ fontSize: 'clamp(28px, 7vw, 40px)', letterSpacing: '0.1em' }}
+        >
+          Kata Blocks
+        </h2>
+        <p className="text-rp-text-secondary text-xs sm:text-sm leading-snug max-w-[280px]">
+          Setze Techniken zusammen. Forme die perfekte Kata.
+        </p>
+
+        <div className="w-full max-w-[280px] mt-2">
+          <TechniqueLegend />
+        </div>
+
+        <div className="flex items-center gap-2 mt-2">
+          <span className="text-[10px] uppercase tracking-rp-display text-rp-text-muted">
+            Highscore
+          </span>
+          <span className="rp-mono text-rp-beige text-sm font-semibold">
+            {bestScore}
+          </span>
+        </div>
+
+        <div className="w-full max-w-[280px] flex flex-col gap-1.5">
+          <p className="text-[10px] uppercase tracking-rp-display text-rp-text-muted">
+            Start-Gürtel
+          </p>
+          <div className="grid grid-cols-5 gap-1">
+            {BELT_LEVELS.map((b) => {
+              const locked = b.level > safeUnlocked;
+              const active = b.level === selectedLevel;
+              return (
+                <button
+                  key={b.level}
+                  disabled={locked}
+                  onClick={() => setSelectedLevel(b.level)}
+                  className="flex flex-col items-center gap-0.5 p-1 rounded transition-all duration-rp"
+                  style={{
+                    background: active ? 'rgba(220,13,29,0.12)' : 'transparent',
+                    border: active
+                      ? '1px solid rgba(220,13,29,0.4)'
+                      : '1px solid transparent',
+                    opacity: locked ? 0.3 : 1,
+                    cursor: locked ? 'not-allowed' : 'pointer',
+                  }}
+                  aria-label={`${b.name} starten`}
+                >
+                  <span
+                    className="block w-full h-1 rounded-full"
+                    style={{
+                      background: b.hex,
+                      border: b.isBlack ? '1px solid #d4c9b5' : 'none',
+                    }}
+                  />
+                  <span
+                    className="text-[8px] uppercase font-semibold"
+                    style={{ color: active ? '#fff' : '#a0a0a0' }}
+                  >
+                    {b.level}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <p className="text-[10px] text-rp-text-muted">
+            {BELT_LEVELS[selectedLevel - 1]?.name}
+          </p>
+        </div>
+
+        <button onClick={() => onStart(selectedLevel)} className="rp-btn w-full max-w-[280px] mt-2">
+          Training starten
+        </button>
+        <p className="text-[10px] uppercase tracking-rp-tight text-rp-text-muted">
+          oder drücke Leertaste
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function useScoreCounter(target: number, active: boolean, duration = 1500) {
+  const [value, setValue] = useState(0);
+  useEffect(() => {
+    if (!active) {
+      setValue(0);
+      return;
+    }
+    const start = performance.now();
+    let raf = 0;
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - start) / duration);
+      const eased = t === 1 ? 1 : 1 - Math.pow(2, -10 * t);
+      setValue(Math.round(target * eased));
+      if (t < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [target, active, duration]);
+  return value;
 }

@@ -1,13 +1,28 @@
 import { useCallback, useEffect, useReducer } from 'react';
+import {
+  BELT_LEVELS,
+  COLS,
+  FLASH_MS,
+  LINES_PER_BELT,
+  PIECE_SHAPES,
+  PIECE_TYPES,
+  ROWS,
+  comboMultiplier,
+  dropIntervalMs,
+  type PieceType,
+} from './tetrisConstants';
 
-export const COLS = 10;
-export const ROWS = 20;
-const FLASH_MS = 280;
-const LINES_PER_BELT = 8;
+// Re-Exports für rückwärtskompatible Imports im Spiel
+export { COLS, ROWS, PIECE_SHAPES, type PieceType } from './tetrisConstants';
 
-export type PieceType = 'I' | 'O' | 'T' | 'S' | 'Z' | 'J' | 'L';
-export type Status = 'idle' | 'playing' | 'paused' | 'gameover' | 'lineflash';
-export type Cell = string | 0;
+export type Status =
+  | 'idle'
+  | 'playing'
+  | 'paused'
+  | 'gameover'
+  | 'lineflash';
+
+export type Cell = PieceType | 0;
 export type Board = Cell[][];
 
 export interface Piece {
@@ -26,62 +41,16 @@ export interface TetrisState {
   lines: number;
   level: number;
   beltIndex: number;
+  startBeltIndex: number;
   dropAccumMs: number;
   flashRows: number[];
   lastClearCount: number;
+  combo: number;
+  flashStartedAt: number;
 }
 
-// RANDORI PRO Markenfarben verteilt auf 7 Pieces (Rottöne + Beige + Grau)
-export const PIECE_COLORS: Record<PieceType, string> = {
-  I: '#dc0d1d', // rot — Long-Form-Technik
-  O: '#d4c9b5', // beige — Stand
-  T: '#aa1a1d', // rot-mittel
-  S: '#dc0d1d',
-  Z: '#575e62', // grau
-  J: '#aa1a1d',
-  L: '#6d1723', // dunkelrot
-};
-
-export const PIECE_SHAPES: Record<PieceType, number[][]> = {
-  I: [
-    [0, 0, 0, 0],
-    [1, 1, 1, 1],
-    [0, 0, 0, 0],
-    [0, 0, 0, 0],
-  ],
-  O: [
-    [1, 1],
-    [1, 1],
-  ],
-  T: [
-    [0, 1, 0],
-    [1, 1, 1],
-    [0, 0, 0],
-  ],
-  S: [
-    [0, 1, 1],
-    [1, 1, 0],
-    [0, 0, 0],
-  ],
-  Z: [
-    [1, 1, 0],
-    [0, 1, 1],
-    [0, 0, 0],
-  ],
-  J: [
-    [1, 0, 0],
-    [1, 1, 1],
-    [0, 0, 0],
-  ],
-  L: [
-    [0, 0, 1],
-    [1, 1, 1],
-    [0, 0, 0],
-  ],
-};
-
 type Action =
-  | { type: 'start' }
+  | { type: 'start'; startBeltIndex?: number }
   | { type: 'reset' }
   | { type: 'tick'; dt: number }
   | { type: 'left' }
@@ -100,8 +69,7 @@ function makeBoard(): Board {
 }
 
 function randPiece(): PieceType {
-  const types: PieceType[] = ['I', 'O', 'T', 'S', 'Z', 'J', 'L'];
-  return types[Math.floor(Math.random() * types.length)];
+  return PIECE_TYPES[Math.floor(Math.random() * PIECE_TYPES.length)];
 }
 
 function spawn(type: PieceType): Piece {
@@ -137,7 +105,7 @@ function collides(board: Board, piece: Piece): boolean {
       const bx = x + c;
       const by = y + r;
       if (bx < 0 || bx >= COLS || by >= ROWS) return true;
-      if (by < 0) continue; // Spawn-Toleranz oberhalb des Bretts
+      if (by < 0) continue;
       if (board[by][bx] !== 0) return true;
     }
   }
@@ -146,14 +114,13 @@ function collides(board: Board, piece: Piece): boolean {
 
 function lockPiece(board: Board, piece: Piece): Board {
   const next = board.map((row) => [...row]);
-  const color = PIECE_COLORS[piece.type];
   for (let r = 0; r < piece.shape.length; r++) {
     for (let c = 0; c < piece.shape[r].length; c++) {
       if (!piece.shape[r][c]) continue;
       const bx = piece.x + c;
       const by = piece.y + r;
       if (by >= 0 && by < ROWS && bx >= 0 && bx < COLS) {
-        next[by][bx] = color;
+        next[by][bx] = piece.type;
       }
     }
   }
@@ -178,26 +145,18 @@ function clearRows(board: Board, rows: number[]): Board {
   return remaining;
 }
 
-function dropIntervalMs(level: number): number {
-  return Math.max(100, 800 - (level - 1) * 110);
-}
-
 function scoreForLines(n: number, level: number): number {
   switch (n) {
-    case 1:
-      return 40 * level;
-    case 2:
-      return 100 * level;
-    case 3:
-      return 300 * level;
-    case 4:
-      return 1200 * level;
-    default:
-      return 0;
+    case 1: return 40 * level;
+    case 2: return 100 * level;
+    case 3: return 300 * level;
+    case 4: return 1200 * level;
+    default: return 0;
   }
 }
 
-function init(): TetrisState {
+function init(startBeltIndex = 0): TetrisState {
+  const level = startBeltIndex + 1;
   return {
     board: makeBoard(),
     piece: null,
@@ -205,11 +164,14 @@ function init(): TetrisState {
     status: 'idle',
     score: 0,
     lines: 0,
-    level: 1,
-    beltIndex: 0,
+    level,
+    beltIndex: startBeltIndex,
+    startBeltIndex,
     dropAccumMs: 0,
     flashRows: [],
     lastClearCount: 0,
+    combo: 0,
+    flashStartedAt: 0,
   };
 }
 
@@ -219,28 +181,33 @@ function lockAndProceed(state: TetrisState, accumLeftover: number): TetrisState 
   const fullRows = findFullRows(locked);
 
   if (fullRows.length) {
+    const newCombo = state.combo + 1;
+    const baseScore = scoreForLines(fullRows.length, state.level);
+    const total = Math.round(baseScore * comboMultiplier(newCombo));
     return {
       ...state,
       board: locked,
       piece: null,
       flashRows: fullRows,
       lastClearCount: fullRows.length,
+      combo: newCombo,
       status: 'lineflash',
+      flashStartedAt: performance.now(),
       dropAccumMs: accumLeftover,
-      score: state.score + scoreForLines(fullRows.length, state.level),
+      score: state.score + total,
     };
   }
 
-  // Keine Linien — direkt nächstes Stück spawnen
+  // Keine Linien — Combo bricht
   const piece = spawn(state.next);
-  const newNext = randPiece();
   const status: Status = collides(locked, piece) ? 'gameover' : 'playing';
   return {
     ...state,
     board: locked,
     piece: status === 'gameover' ? state.piece : piece,
-    next: newNext,
+    next: randPiece(),
     status,
+    combo: 0,
     dropAccumMs: 0,
   };
 }
@@ -248,9 +215,14 @@ function lockAndProceed(state: TetrisState, accumLeftover: number): TetrisState 
 function reducer(state: TetrisState, action: Action): TetrisState {
   switch (action.type) {
     case 'reset':
-      return init();
+      return init(state.startBeltIndex);
+
     case 'start': {
-      const fresh = init();
+      const startBelt =
+        action.startBeltIndex !== undefined
+          ? action.startBeltIndex
+          : state.startBeltIndex;
+      const fresh = init(startBelt);
       const piece = spawn(fresh.next);
       return {
         ...fresh,
@@ -259,6 +231,7 @@ function reducer(state: TetrisState, action: Action): TetrisState {
         status: 'playing',
       };
     }
+
     case 'pause':
       return state.status === 'playing' ? { ...state, status: 'paused' } : state;
     case 'resume':
@@ -332,16 +305,19 @@ function reducer(state: TetrisState, action: Action): TetrisState {
     case 'flashEnd': {
       const cleared = clearRows(state.board, state.flashRows);
       const newLines = state.lines + state.flashRows.length;
-      const newBeltIndex = Math.min(6, Math.floor(newLines / LINES_PER_BELT));
+      // Belt steigt: alle 8 Linien einen Belt höher, bis Level 10
+      const newBeltIndex = Math.min(
+        BELT_LEVELS.length - 1,
+        Math.max(state.startBeltIndex, Math.floor(newLines / LINES_PER_BELT) + state.startBeltIndex),
+      );
       const newLevel = newBeltIndex + 1;
       const piece = spawn(state.next);
-      const newNext = randPiece();
       const status: Status = collides(cleared, piece) ? 'gameover' : 'playing';
       return {
         ...state,
         board: cleared,
         piece: status === 'gameover' ? state.piece : piece,
-        next: newNext,
+        next: randPiece(),
         status,
         lines: newLines,
         beltIndex: newBeltIndex,
@@ -354,9 +330,9 @@ function reducer(state: TetrisState, action: Action): TetrisState {
 }
 
 export function useTetrisGame() {
-  const [state, dispatch] = useReducer(reducer, undefined, init);
+  const [state, dispatch] = useReducer(reducer, undefined, () => init(0));
 
-  // Game-Loop via rAF — läuft nur, wenn 'playing'
+  // Game-Loop via rAF
   useEffect(() => {
     if (state.status !== 'playing') return;
     let last = performance.now();
@@ -371,14 +347,17 @@ export function useTetrisGame() {
     return () => cancelAnimationFrame(raf);
   }, [state.status]);
 
-  // Line-Flash Timer
+  // Line-Flash → flashEnd
   useEffect(() => {
     if (state.status !== 'lineflash') return;
     const id = window.setTimeout(() => dispatch({ type: 'flashEnd' }), FLASH_MS);
     return () => window.clearTimeout(id);
   }, [state.status]);
 
-  const start = useCallback(() => dispatch({ type: 'start' }), []);
+  const start = useCallback(
+    (startBeltIndex?: number) => dispatch({ type: 'start', startBeltIndex }),
+    [],
+  );
   const reset = useCallback(() => dispatch({ type: 'reset' }), []);
   const pause = useCallback(() => dispatch({ type: 'pause' }), []);
   const resume = useCallback(() => dispatch({ type: 'resume' }), []);

@@ -271,3 +271,11 @@
     text-shadow: 0 0 18px rgba(212, 201, 181, 0.55);
   }
 }
+
+@keyframes rp-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-2px); }
+  40% { transform: translateX(2px); }
+  60% { transform: translateX(-1px); }
+  80% { transform: translateX(1px); }
+}
