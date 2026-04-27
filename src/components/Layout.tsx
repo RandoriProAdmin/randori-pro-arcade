@@ -1,108 +1,210 @@
-import { NavLink, Outlet, Link } from 'react-router-dom';
+import { useState } from 'react';
+import { NavLink, Outlet, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { signOut } from '../lib/auth';
+import AuthModal from './AuthModal';
 
-function Navbar() {
+function NavItem({
+  to,
+  children,
+  end,
+  onClick,
+}: {
+  to: string;
+  children: React.ReactNode;
+  end?: boolean;
+  onClick?: () => void;
+}) {
+  return (
+    <NavLink to={to} end={end} onClick={onClick}>
+      {({ isActive }) => (
+        <span
+          className={`relative inline-flex flex-col items-center px-3 py-2 text-[13px] font-semibold uppercase tracking-rp-wide transition-colors duration-rp ${
+            isActive ? 'text-rp-rot' : 'text-rp-text-secondary hover:text-white'
+          }`}
+        >
+          {children}
+          <span
+            className={`mt-1 w-1 h-1 rounded-full transition-opacity duration-rp ${
+              isActive ? 'bg-rp-rot opacity-100' : 'opacity-0'
+            }`}
+            aria-hidden
+          />
+        </span>
+      )}
+    </NavLink>
+  );
+}
+
+function Navbar({ onLogin }: { onLogin: () => void }) {
   const { user } = useAuth();
+  const [open, setOpen] = useState(false);
+  const close = () => setOpen(false);
 
   return (
-    <header className="sticky top-0 z-40 bg-rp-dunkelrot text-white border-b border-rp-beige/30">
-      <nav className="mx-auto max-w-6xl px-4 h-14 flex items-center justify-between">
+    <header className="sticky top-0 z-40 backdrop-blur-md bg-[rgba(15,15,15,0.85)] border-b border-[rgba(212,201,181,0.1)]">
+      <nav className="mx-auto max-w-6xl px-4 h-16 flex items-center justify-between">
         <Link
           to="/"
-          className="font-black uppercase tracking-rp text-base sm:text-lg whitespace-nowrap"
+          onClick={close}
+          className="rp-display text-xl sm:text-2xl text-white whitespace-nowrap"
+          style={{ letterSpacing: '0.15em' }}
         >
-          RANDORI&nbsp;PRO <span className="text-rp-beige">Arcade</span>
+          RANDORI&nbsp;PRO <span className="text-rp-rot">ARCADE</span>
         </Link>
 
-        <div className="flex items-center gap-1 sm:gap-4 text-sm font-bold uppercase tracking-rp">
-          <NavLink
-            to="/"
-            end
-            className={({ isActive }) =>
-              `px-2 py-1 rounded-rp transition-colors duration-rp ${
-                isActive ? 'bg-rp-rot' : 'hover:bg-rp-rot-mittel'
-              }`
-            }
-          >
-            Dojo
-          </NavLink>
-          <NavLink
-            to="/bestenliste"
-            className={({ isActive }) =>
-              `px-2 py-1 rounded-rp transition-colors duration-rp ${
-                isActive ? 'bg-rp-rot' : 'hover:bg-rp-rot-mittel'
-              }`
-            }
-          >
-            Bestenliste
-          </NavLink>
-
+        {/* Desktop nav */}
+        <div className="hidden md:flex items-center gap-1">
+          <NavItem to="/" end>Dojo</NavItem>
+          <NavItem to="/bestenliste">Bestenliste</NavItem>
           {user ? (
             <button
               onClick={() => signOut()}
-              className="ml-2 px-3 py-1 rounded-rp border border-rp-beige hover:bg-rp-beige hover:text-rp-dunkelrot transition-colors duration-rp"
+              className="rp-btn-secondary ml-3"
+              style={{ padding: '8px 18px', fontSize: '13px' }}
             >
               Logout
             </button>
           ) : (
-            <span className="ml-2 text-rp-beige hidden sm:inline">Gast-Modus</span>
+            <button
+              onClick={onLogin}
+              className="rp-btn ml-3"
+              style={{ padding: '8px 18px', fontSize: '13px' }}
+            >
+              Login
+            </button>
           )}
         </div>
+
+        {/* Mobile burger */}
+        <button
+          className="md:hidden text-rp-text-secondary hover:text-white p-2 transition-colors duration-rp"
+          aria-label="Menü öffnen"
+          aria-expanded={open}
+          onClick={() => setOpen((v) => !v)}
+        >
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            {open ? (
+              <>
+                <line x1="6" y1="6" x2="18" y2="18" />
+                <line x1="6" y1="18" x2="18" y2="6" />
+              </>
+            ) : (
+              <>
+                <line x1="4" y1="7" x2="20" y2="7" />
+                <line x1="4" y1="12" x2="20" y2="12" />
+                <line x1="4" y1="17" x2="20" y2="17" />
+              </>
+            )}
+          </svg>
+        </button>
       </nav>
+
+      {/* Mobile dropdown */}
+      {open && (
+        <div className="md:hidden border-t border-[rgba(212,201,181,0.1)] bg-[rgba(15,15,15,0.95)] backdrop-blur-md">
+          <div className="mx-auto max-w-6xl px-4 py-3 flex flex-col gap-1">
+            <MobileNavLink to="/" end onClick={close}>Dojo</MobileNavLink>
+            <MobileNavLink to="/bestenliste" onClick={close}>Bestenliste</MobileNavLink>
+            {user ? (
+              <button
+                onClick={() => {
+                  signOut();
+                  close();
+                }}
+                className="rp-btn-secondary mt-2 w-full"
+              >
+                Logout
+              </button>
+            ) : (
+              <button
+                onClick={() => {
+                  onLogin();
+                  close();
+                }}
+                className="rp-btn mt-2 w-full"
+              >
+                Login
+              </button>
+            )}
+          </div>
+        </div>
+      )}
     </header>
+  );
+}
+
+function MobileNavLink({
+  to,
+  children,
+  end,
+  onClick,
+}: {
+  to: string;
+  children: React.ReactNode;
+  end?: boolean;
+  onClick?: () => void;
+}) {
+  return (
+    <NavLink to={to} end={end} onClick={onClick}>
+      {({ isActive }) => (
+        <span
+          className={`block py-2 text-sm font-semibold uppercase tracking-rp-wide ${
+            isActive ? 'text-rp-rot' : 'text-rp-text-secondary'
+          }`}
+        >
+          {children}
+        </span>
+      )}
+    </NavLink>
   );
 }
 
 function Footer() {
   return (
-    <footer className="mt-12 bg-rp-beige text-rp-dunkelrot">
-      <div className="mx-auto max-w-6xl px-4 py-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
-        <p className="font-bold uppercase tracking-rp text-sm">
+    <footer className="mt-16 bg-[#0a0a0a] border-t border-[rgba(212,201,181,0.08)]">
+      <div className="mx-auto max-w-6xl px-4 py-8 flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-6 text-center">
+        <p className="text-rp-text-muted text-[13px]">
           © 2026 RANDORI PRO Kampfsportschulen
         </p>
-        <div className="flex gap-4 text-sm font-bold uppercase tracking-rp">
-          <a
-            href="https://www.randori-pro.de"
-            target="_blank"
-            rel="noreferrer"
-            className="hover:underline"
-          >
-            randori-pro.de
-          </a>
-          <a
-            href="https://www.instagram.com/randori.pro.berlin/"
-            target="_blank"
-            rel="noreferrer"
-            className="hover:underline"
-          >
-            @randori.pro.berlin
-          </a>
-        </div>
+        <span className="hidden sm:inline text-rp-text-muted">·</span>
+        <a
+          href="https://www.randori-pro.de"
+          target="_blank"
+          rel="noreferrer"
+          className="text-rp-beige text-[13px] hover:text-rp-rot transition-colors duration-rp"
+        >
+          randori-pro.de
+        </a>
+        <span className="hidden sm:inline text-rp-text-muted">·</span>
+        <a
+          href="https://www.instagram.com/randori.pro.berlin/"
+          target="_blank"
+          rel="noreferrer"
+          className="text-rp-beige text-[13px] hover:text-rp-rot transition-colors duration-rp"
+        >
+          @randori.pro.berlin
+        </a>
       </div>
     </footer>
   );
 }
 
-function CornerAccent({ className }: { className?: string }) {
-  return (
-    <span
-      aria-hidden
-      className={`pointer-events-none absolute w-40 h-40 rounded-full bg-rp-rot/10 ${className ?? ''}`}
-    />
-  );
-}
-
 export default function Layout() {
+  const [authOpen, setAuthOpen] = useState(false);
+  const location = useLocation();
+
   return (
-    <div className="min-h-full flex flex-col bg-rp-schwarz text-rp-hellgrau relative overflow-hidden">
-      <CornerAccent className="-top-20 -left-20" />
-      <CornerAccent className="-bottom-20 -right-20" />
-      <Navbar />
-      <main className="flex-1 mx-auto w-full max-w-6xl px-4 py-8 relative z-10">
+    <div className="min-h-full flex flex-col text-white">
+      <Navbar onLogin={() => setAuthOpen(true)} />
+      <main
+        key={location.pathname}
+        className="flex-1 mx-auto w-full max-w-6xl px-4 sm:px-6 py-8 rp-anim-fade"
+      >
         <Outlet />
       </main>
       <Footer />
+      <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} />
     </div>
   );
 }

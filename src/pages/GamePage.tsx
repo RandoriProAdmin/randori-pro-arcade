@@ -12,10 +12,10 @@ export default function GamePage() {
 
   if (!game) {
     return (
-      <div className="rp-panel p-6">
-        <h2 className="text-2xl text-white">Spiel nicht gefunden</h2>
-        <p className="text-rp-beige mt-2">Bitte zurück zum Dojo.</p>
-        <Link to="/" className="rp-btn mt-4">
+      <div className="rp-panel p-8">
+        <h2 className="rp-display text-3xl text-white">Spiel nicht gefunden</h2>
+        <p className="text-rp-text-secondary mt-2">Bitte zurück zum Dojo.</p>
+        <Link to="/" className="rp-btn mt-5">
           Zum Dojo
         </Link>
       </div>
@@ -31,27 +31,44 @@ export default function GamePage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <header className="flex items-center justify-between gap-4">
+      <header className="flex items-start justify-between gap-4">
         <div>
-          <p className="text-rp-beige uppercase tracking-rp text-xs font-bold">{game.subtitle}</p>
-          <h1 className="text-3xl sm:text-4xl text-white">{game.title}</h1>
+          <p className="text-rp-text-muted uppercase tracking-rp-display text-xs font-medium">
+            {game.subtitle}
+          </p>
+          <h1
+            className="rp-display text-3xl sm:text-5xl text-white mt-1"
+            style={{ letterSpacing: '0.08em' }}
+          >
+            {game.title}
+          </h1>
         </div>
-        <Link to="/" className="rp-btn-secondary text-sm">
+        <Link
+          to="/"
+          className="rp-btn-secondary shrink-0"
+          style={{ padding: '8px 16px', fontSize: '13px' }}
+        >
           ← Dojo
         </Link>
       </header>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-6">
-        <div className="rp-panel p-3 sm:p-4 flex items-center justify-center min-h-[400px]">
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6">
+        <div className="rp-field flex items-center justify-center min-h-[420px]">
           <GameComponent />
         </div>
-        <aside className="flex flex-col gap-4">
-          <div className="rp-panel p-4">
-            <h3 className="text-sm text-rp-beige uppercase tracking-rp">Beschreibung</h3>
-            <p className="mt-2 text-sm text-rp-hellgrau/80">{game.description}</p>
+        <aside className="flex flex-col gap-5">
+          <div className="rp-panel p-5">
+            <h3 className="text-xs text-rp-text-muted uppercase tracking-rp-display font-semibold">
+              Beschreibung
+            </h3>
+            <p className="mt-3 text-sm text-rp-text-secondary leading-relaxed">
+              {game.description}
+            </p>
           </div>
           <div>
-            <h3 className="text-sm text-rp-beige uppercase tracking-rp mb-2">Top 5</h3>
+            <h3 className="text-xs text-rp-text-muted uppercase tracking-rp-display font-semibold mb-3">
+              Top 5
+            </h3>
             <Leaderboard game={game.slug} limit={5} />
           </div>
         </aside>

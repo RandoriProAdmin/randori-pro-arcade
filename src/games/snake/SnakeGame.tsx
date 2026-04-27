@@ -5,6 +5,30 @@ import { beltColors } from '../../styles/theme';
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
 import { useAuth } from '../../hooks/useAuth';
 
+function TouchKey({
+  children,
+  onClick,
+  label,
+  variant = 'primary',
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  label: string;
+  variant?: 'primary' | 'muted';
+}) {
+  const base =
+    'flex items-center justify-center w-14 h-14 rounded-xl text-xl font-bold transition-all duration-rp active:scale-95';
+  const skin =
+    variant === 'primary'
+      ? 'bg-[rgba(220,13,29,0.6)] text-white active:bg-rp-rot'
+      : 'bg-[rgba(212,201,181,0.08)] text-rp-text-secondary active:bg-[rgba(212,201,181,0.15)] active:text-white';
+  return (
+    <button onClick={onClick} className={`${base} ${skin}`} aria-label={label}>
+      {children}
+    </button>
+  );
+}
+
 const KEY_DIRECTIONS: Record<string, Direction> = {
   ArrowUp: 'up',
   ArrowDown: 'down',
@@ -169,15 +193,16 @@ export default function SnakeGame() {
 
   return (
     <div className="w-full max-w-[600px] flex flex-col items-center gap-3">
-      <div className="w-full flex items-center justify-between rp-mono text-xs sm:text-sm flex-wrap gap-2">
-        <span className="text-rp-beige">
-          Gürtelgrad: <span className="text-white">{beltName}</span>
+      <div className="w-full flex items-center justify-between rp-mono text-xs sm:text-sm flex-wrap gap-3">
+        <span className="text-rp-text-muted uppercase tracking-rp-tight text-[11px] font-medium">
+          Gürtelgrad <span className="text-white normal-case tracking-normal ml-1.5 font-semibold">{beltName}</span>
         </span>
-        <span className="text-rp-beige">
-          Punkte: <span className="text-rp-rot text-base font-bold">{state.score}</span>
+        <span className="text-rp-text-muted uppercase tracking-rp-tight text-[11px] font-medium flex items-baseline gap-2">
+          Punkte
+          <span className="text-rp-rot text-2xl font-bold rp-mono normal-case tracking-normal">{state.score}</span>
         </span>
-        <span className="text-rp-beige">
-          Level: <span className="text-white">{state.level}</span>
+        <span className="text-rp-text-muted uppercase tracking-rp-tight text-[11px] font-medium">
+          Level <span className="text-white ml-1.5 font-semibold">{state.level}</span>
         </span>
       </div>
 
@@ -189,13 +214,13 @@ export default function SnakeGame() {
       >
         <canvas
           ref={canvasRef}
-          className="absolute inset-0 w-full h-full border border-rp-beige rounded-rp"
+          className="absolute inset-0 w-full h-full border border-[rgba(212,201,181,0.2)] rounded-rp-md"
           aria-label="Gürtelschlange-Spielfeld"
         />
         {state.status === 'idle' && (
           <button
             onClick={start}
-            className="absolute inset-0 bg-black/60 flex items-center justify-center rounded-rp"
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center rounded-rp-md"
             aria-label="Spiel starten"
           >
             <span className="rp-btn">Spielen</span>
@@ -204,69 +229,45 @@ export default function SnakeGame() {
         {state.status === 'paused' && (
           <button
             onClick={resume}
-            className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center rounded-rp gap-2"
+            className="absolute inset-0 bg-black/70 backdrop-blur-sm flex flex-col items-center justify-center rounded-rp-md gap-3"
             aria-label="Spiel fortsetzen"
           >
-            <span className="text-rp-beige uppercase tracking-rp text-sm">Pause</span>
+            <span className="rp-display text-rp-beige text-2xl" style={{ letterSpacing: '0.12em' }}>Pause</span>
             <span className="rp-btn">Fortsetzen</span>
           </button>
         )}
       </div>
 
       {/* Mobile / Touch controls */}
-      <div className="grid grid-cols-3 gap-2 w-48 sm:hidden">
+      <div className="grid grid-cols-3 gap-3 sm:hidden">
         <span />
-        <button
-          onClick={() => turn('up')}
-          className="rp-btn-secondary py-3"
-          aria-label="Hoch"
-        >
-          ▲
-        </button>
+        <TouchKey label="Hoch" onClick={() => turn('up')}>▲</TouchKey>
         <span />
-        <button
-          onClick={() => turn('left')}
-          className="rp-btn-secondary py-3"
-          aria-label="Links"
-        >
-          ◀
-        </button>
-        <button
+        <TouchKey label="Links" onClick={() => turn('left')}>◀</TouchKey>
+        <TouchKey
+          label="Pause"
+          variant="muted"
           onClick={() => (state.status === 'playing' ? pause() : resume())}
-          className="rp-btn-secondary py-3"
-          aria-label="Pause"
         >
           ⏸
-        </button>
-        <button
-          onClick={() => turn('right')}
-          className="rp-btn-secondary py-3"
-          aria-label="Rechts"
-        >
-          ▶
-        </button>
+        </TouchKey>
+        <TouchKey label="Rechts" onClick={() => turn('right')}>▶</TouchKey>
         <span />
-        <button
-          onClick={() => turn('down')}
-          className="rp-btn-secondary py-3"
-          aria-label="Runter"
-        >
-          ▼
-        </button>
+        <TouchKey label="Runter" onClick={() => turn('down')}>▼</TouchKey>
         <span />
       </div>
 
-      <p className="hidden sm:block text-xs text-rp-beige rp-mono text-center">
+      <p className="hidden sm:block text-xs text-rp-text-muted rp-mono text-center">
         Pfeiltasten / WASD bewegen · Leertaste pausiert · Wische auf Touch
       </p>
 
       {!isSupabaseConfigured && (
-        <p className="text-xs text-rp-beige/60 text-center">
+        <p className="text-xs text-rp-text-muted text-center">
           Gast-Modus: Highscores werden nicht gespeichert.
         </p>
       )}
       {isSupabaseConfigured && !user && (
-        <p className="text-xs text-rp-beige/60 text-center">
+        <p className="text-xs text-rp-text-muted text-center">
           Logge dich ein, um deinen Highscore zu speichern.
         </p>
       )}

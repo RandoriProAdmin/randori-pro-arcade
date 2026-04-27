@@ -1,30 +1,47 @@
 import { Link } from 'react-router-dom';
 import type { GameMeta } from '../types';
 
-export default function GameCard({ game }: { game: GameMeta }) {
+interface Props {
+  game: GameMeta;
+  index?: number;
+}
+
+export default function GameCard({ game, index = 0 }: Props) {
   return (
     <Link
       to={`/spiel/${game.slug}`}
-      className="rp-card p-6 flex flex-col gap-4 group focus:outline-none focus:ring-2 focus:ring-rp-rot"
+      className="rp-card rp-anim-stagger group focus:outline-none focus:ring-2 focus:ring-rp-rot/50 flex flex-col"
+      style={{ animationDelay: `${index * 80}ms` }}
       aria-label={`Spiel starten: ${game.title}`}
     >
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h3 className="text-xl text-white">{game.title}</h3>
-          <p className="text-rp-beige text-sm mt-1 uppercase tracking-rp font-bold">
-            {game.subtitle}
-          </p>
+      <div className="p-6 pt-8 flex flex-col gap-4 flex-1">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h3
+              className="rp-display text-3xl sm:text-[34px] text-white"
+              style={{ letterSpacing: '0.08em' }}
+            >
+              {game.title}
+            </h3>
+            <p className="text-rp-text-muted text-[11px] mt-1.5 uppercase tracking-rp-display font-medium">
+              {game.subtitle}
+            </p>
+          </div>
+          <span
+            aria-hidden
+            className="text-3xl select-none transition-transform duration-300 group-hover:scale-110"
+          >
+            {game.icon}
+          </span>
         </div>
-        <span
-          aria-hidden
-          className="text-3xl select-none text-rp-rot group-hover:scale-110 transition-transform duration-rp"
-        >
-          {game.icon}
-        </span>
+        <p className="text-rp-text-secondary text-sm leading-relaxed">
+          {game.description}
+        </p>
       </div>
-      <p className="text-rp-hellgrau/80 text-sm leading-relaxed">{game.description}</p>
-      <div className="mt-auto pt-2">
-        <span className="rp-btn text-sm">Spielen</span>
+      <div className="border-t border-[rgba(212,201,181,0.08)] px-6 py-4">
+        <span className="block w-full text-center text-rp-rot text-sm font-semibold uppercase tracking-rp-wide group-hover:text-white transition-colors duration-rp">
+          Spielen <span className="inline-block transition-transform duration-rp group-hover:translate-x-1">→</span>
+        </span>
       </div>
     </Link>
   );
