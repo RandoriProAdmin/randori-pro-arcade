@@ -27,18 +27,78 @@ import {
 } from './sprites';
 import type { Boss, Enemy, Particle, PowerUp, Projectile, Shield, State } from './useSpaceInvadersGame';
 
-// Hintergrund: Enso, Torii, Boden, Vignette, Wand-Linien
-function drawDojoBackground(ctx: CanvasRenderingContext2D) {
-  // BG
-  ctx.fillStyle = '#0a0a0a';
+// Hintergrund: Tatami-Grau + Wave-Evolution (Risse, Rauch, Feuer)
+function drawWallCracks(ctx: CanvasRenderingContext2D, count: number) {
+  ctx.save();
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.18)';
+  ctx.lineWidth = 0.6;
+  // Pseudo-zufällig aber stabil pro Position
+  const seed = 42;
+  for (let i = 0; i < count; i++) {
+    const side = i % 2 === 0 ? 0 : LOGICAL_WIDTH;
+    const startY = (((seed * (i + 1) * 137) % 100) / 100) * LOGICAL_HEIGHT * 0.85;
+    const len = 18 + (((seed * (i + 3) * 73) % 100) / 100) * 30;
+    const dir = side === 0 ? 1 : -1;
+    ctx.beginPath();
+    ctx.moveTo(side, startY);
+    ctx.lineTo(side + dir * len * 0.55, startY + len * 0.4);
+    ctx.lineTo(side + dir * len * 0.85, startY + len * 0.75);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawSmoke(ctx: CanvasRenderingContext2D, intensity: number) {
+  const a = Math.min(0.06, intensity * 0.012);
+  ctx.save();
+  const grad1 = ctx.createRadialGradient(0, LOGICAL_HEIGHT * 0.3, 0, 0, LOGICAL_HEIGHT * 0.3, LOGICAL_WIDTH * 0.35);
+  grad1.addColorStop(0, `rgba(60, 60, 60, ${a})`);
+  grad1.addColorStop(1, 'rgba(60, 60, 60, 0)');
+  ctx.fillStyle = grad1;
   ctx.fillRect(0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT);
+  const grad2 = ctx.createRadialGradient(LOGICAL_WIDTH, LOGICAL_HEIGHT * 0.5, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT * 0.5, LOGICAL_WIDTH * 0.35);
+  grad2.addColorStop(0, `rgba(60, 60, 60, ${a})`);
+  grad2.addColorStop(1, 'rgba(60, 60, 60, 0)');
+  ctx.fillStyle = grad2;
+  ctx.fillRect(0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT);
+  ctx.restore();
+}
+
+function drawFireGlow(ctx: CanvasRenderingContext2D, now: number, intensity: number) {
+  const flicker = 1 + Math.sin(now / 220) * 0.3;
+  const a = Math.min(0.05, intensity * 0.01) * flicker;
+  ctx.save();
+  const grad = ctx.createLinearGradient(0, LOGICAL_HEIGHT, 0, LOGICAL_HEIGHT * 0.55);
+  grad.addColorStop(0, `rgba(220, 80, 13, ${a})`);
+  grad.addColorStop(1, 'rgba(220, 80, 13, 0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, LOGICAL_HEIGHT * 0.55, LOGICAL_WIDTH, LOGICAL_HEIGHT * 0.45);
+  ctx.restore();
+}
+
+function drawDojoBackground(ctx: CanvasRenderingContext2D, wave: number, now: number, lastStand: boolean) {
+  // Tatami-Grau (konsistent mit Snake/Tetris)
+  ctx.fillStyle = '#474e52';
+  ctx.fillRect(0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT);
+
+  // Subtile diagonale Schraffur
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.012)';
+  ctx.lineWidth = 0.5;
+  for (let i = -LOGICAL_HEIGHT; i < LOGICAL_WIDTH + LOGICAL_HEIGHT; i += 16) {
+    ctx.beginPath();
+    ctx.moveTo(i, 0);
+    ctx.lineTo(i + LOGICAL_HEIGHT, LOGICAL_HEIGHT);
+    ctx.stroke();
+  }
+  ctx.restore();
 
   // Enso
   ctx.save();
   const cx = LOGICAL_WIDTH / 2;
   const cy = LOGICAL_HEIGHT / 2;
   const radius = Math.min(LOGICAL_WIDTH, LOGICAL_HEIGHT) * 0.34;
-  ctx.strokeStyle = 'rgba(220, 13, 29, 0.025)';
+  ctx.strokeStyle = 'rgba(220, 13, 29, 0.04)';
   ctx.lineWidth = 4;
   ctx.lineCap = 'round';
   ctx.beginPath();
@@ -46,21 +106,52 @@ function drawDojoBackground(ctx: CanvasRenderingContext2D) {
   ctx.stroke();
   ctx.restore();
 
-  // Torii oben
+  // Torii oben (verblasst bei Zerstörung)
   drawTorii(ctx, LOGICAL_WIDTH);
 
-  // Boden-Andeutung (unteres 15%)
+  // Boden-Andeutung (unteres ~15%)
   const floorH = LOGICAL_HEIGHT * 0.18;
   const grad = ctx.createLinearGradient(0, LOGICAL_HEIGHT - floorH, 0, LOGICAL_HEIGHT);
   grad.addColorStop(0, 'rgba(212, 201, 181, 0)');
-  grad.addColorStop(1, 'rgba(212, 201, 181, 0.025)');
+  grad.addColorStop(0.4, 'rgba(212, 201, 181, 0.04)');
+  grad.addColorStop(1, 'rgba(212, 201, 181, 0.07)');
   ctx.fillStyle = grad;
   ctx.fillRect(0, LOGICAL_HEIGHT - floorH, LOGICAL_WIDTH, floorH);
 
+  // Tatami-Linien auf dem Boden (5 Streifen)
+  ctx.save();
+  ctx.strokeStyle = 'rgba(212, 201, 181, 0.06)';
+  ctx.lineWidth = 0.7;
+  const stripe = LOGICAL_WIDTH / 5;
+  for (let i = 1; i < 5; i++) {
+    ctx.beginPath();
+    ctx.moveTo(i * stripe, LOGICAL_HEIGHT - floorH);
+    ctx.lineTo(i * stripe, LOGICAL_HEIGHT);
+    ctx.stroke();
+  }
+  ctx.restore();
+
   // Wand-Linien außen
-  ctx.fillStyle = 'rgba(212, 201, 181, 0.04)';
+  ctx.fillStyle = 'rgba(212, 201, 181, 0.05)';
   ctx.fillRect(0, 0, 1, LOGICAL_HEIGHT);
   ctx.fillRect(LOGICAL_WIDTH - 1, 0, 1, LOGICAL_HEIGHT);
+
+  // ── Wave-Evolution-Layer ──
+  if (wave >= 4) {
+    drawWallCracks(ctx, Math.min(12, (wave - 3) * 2));
+  }
+  if (wave >= 7) {
+    drawSmoke(ctx, wave - 6);
+  }
+  if (wave >= 10) {
+    drawFireGlow(ctx, now, wave - 9);
+  }
+
+  // ── Letzte-Verteidigung-Tint ──
+  if (lastStand) {
+    ctx.fillStyle = 'rgba(220, 13, 29, 0.025)';
+    ctx.fillRect(0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT);
+  }
 
   // Vignette
   const vg = ctx.createRadialGradient(
@@ -72,7 +163,7 @@ function drawDojoBackground(ctx: CanvasRenderingContext2D) {
     Math.max(LOGICAL_WIDTH, LOGICAL_HEIGHT) * 0.7,
   );
   vg.addColorStop(0, 'rgba(0,0,0,0)');
-  vg.addColorStop(1, 'rgba(0,0,0,0.45)');
+  vg.addColorStop(1, 'rgba(0,0,0,0.35)');
   ctx.fillStyle = vg;
   ctx.fillRect(0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT);
 }
@@ -110,14 +201,63 @@ function drawBossEntity(ctx: CanvasRenderingContext2D, boss: Boss, now: number) 
   });
 }
 
+function drawShockwave(ctx: CanvasRenderingContext2D, x: number, y: number) {
+  // 3er-Fächer rendert sich als 3 separate Projektile — diese Funktion
+  // zeichnet ein einzelnes davon (etwas kleiner, bläulich-rot)
+  ctx.save();
+  for (let i = 3; i >= 1; i--) {
+    ctx.fillStyle = `rgba(170, 26, 29, ${0.15 - i * 0.025})`;
+    ctx.beginPath();
+    ctx.arc(x, y + i * 3, 2.5 - i * 0.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.shadowBlur = 6;
+  ctx.shadowColor = 'rgba(170, 26, 29, 0.7)';
+  ctx.fillStyle = '#aa1a1d';
+  ctx.beginPath();
+  ctx.arc(x, y, 2.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawPiercing(ctx: CanvasRenderingContext2D, x: number, y: number) {
+  // Länglicher Energiestrahl mit weißem Kern
+  ctx.save();
+  for (let i = 6; i >= 1; i--) {
+    ctx.fillStyle = `rgba(220, 13, 29, ${0.5 - i * 0.06})`;
+    ctx.beginPath();
+    ctx.ellipse(x, y + i * 2.5, 2 - i * 0.2, 4 - i * 0.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.shadowBlur = 10;
+  ctx.shadowColor = '#ff5050';
+  ctx.fillStyle = '#ff3030';
+  ctx.beginPath();
+  ctx.ellipse(x, y, 2.5, 5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.ellipse(x, y, 1, 3.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
 function drawProjectiles(ctx: CanvasRenderingContext2D, items: Projectile[]) {
   for (const p of items) {
     if (p.kind === 'kiblast') {
       drawKiBlast(ctx, p.x, p.y);
+    } else if (p.kind === 'shockwave') {
+      drawShockwave(ctx, p.x, p.y);
+    } else if (p.kind === 'piercing') {
+      drawPiercing(ctx, p.x, p.y);
     } else if (p.kind === 'shuriken') {
       drawShuriken(ctx, p.x, p.y, p.size, p.rotation);
     } else if (p.kind === 'bossShuriken') {
       drawShuriken(ctx, p.x, p.y, p.size, p.rotation, '#dc0d1d');
+    } else if (p.kind === 'diagonalShuriken') {
+      drawShuriken(ctx, p.x, p.y, p.size, p.rotation, 'rgba(220, 160, 30, 0.85)');
+    } else if (p.kind === 'homingShuriken') {
+      drawShuriken(ctx, p.x, p.y, p.size, p.rotation, 'rgba(220, 13, 29, 0.75)');
     }
   }
 }
@@ -163,7 +303,7 @@ export function drawScene({ ctx, cssWidth, state, now, beltIndex }: SceneArgs) {
   ctx.save();
   ctx.scale(scale, scale);
 
-  drawDojoBackground(ctx);
+  drawDojoBackground(ctx, state.wave, now, state.player.lives === 1 && state.status === 'playing');
 
   if ((state.activeEffects.zanshin ?? 0) > now) drawZanshinTint(ctx);
 

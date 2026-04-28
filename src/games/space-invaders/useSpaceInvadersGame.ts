@@ -25,7 +25,6 @@ import {
   MAX_ENEMY_PROJECTILES,
   MAX_KI_BLASTS,
   MAX_KI_BLASTS_DOUBLE,
-  PLAYER_FIRE_COOLDOWN_MS,
   PLAYER_FIRING_VIS_MS,
   PLAYER_INITIAL_LIVES,
   PLAYER_INVULN_AFTER_HIT_MS,
@@ -50,13 +49,20 @@ import {
   SHURIKEN_SPEED,
   WAVE_ANNOUNCE_MS,
   ZANSHIN_TIME_SCALE,
+  KI_TECHNIQUES,
+  COMBO_WINDOW_MS,
+  LAST_STAND,
   beltForWaves,
   bossColorForWave,
   bossHpForWave,
   bossScoreForWave,
   enemyTypeForWave,
+  formationForWave,
   isBossWave,
+  tierForCombo,
+  unlockedWeaponsForWave,
   type EnemyType,
+  type Formation,
 } from './constants';
 import type { PowerUpKind } from './sprites';
 
@@ -98,7 +104,16 @@ export interface Projectile {
   vy: number;
   size: number;
   rotation: number;
-  kind: 'kiblast' | 'shuriken' | 'bossShuriken';
+  kind:
+    | 'kiblast'
+    | 'shockwave'
+    | 'piercing'
+    | 'shuriken'
+    | 'bossShuriken'
+    | 'diagonalShuriken'
+    | 'homingShuriken';
+  piercing?: boolean;
+  hitEnemyIds?: number[]; // bei piercing: schon getroffene Gegner
 }
 
 export interface Shield {
@@ -153,12 +168,19 @@ export interface ActiveEffects {
   zanshin?: number;
 }
 
+export interface ComboState {
+  count: number;
+  lastKillAt: number;
+  bestThisRun: number;
+}
+
 export interface State {
   status: Status;
   player: Player;
   input: { left: boolean; right: boolean };
   enemies: Enemy[];
   formation: { dir: 1 | -1; moveTimer: number };
+  formationType: Formation;
   playerProjectiles: Projectile[];
   enemyProjectiles: Projectile[];
   shields: Shield[];
@@ -176,6 +198,14 @@ export interface State {
   gameOverAt: number | null;
   bossDefeatTextUntil: number;
   ppRecent: { kind: PowerUpKind; until: number } | null;
+  // Combo
+  combo: ComboState;
+  // Waffen
+  activeWeapon: number; // 0..2 (Index in KI_TECHNIQUES)
+  unlockedWeapons: number; // 1, 2, oder 3
+  weaponSwitchedAt: number;
+  // Letzte Verteidigung
+  lastStandActivatedAt: number; // 0 wenn nie
 }
 
 type Action =
@@ -185,6 +215,7 @@ type Action =
   | { type: 'inputLeft'; active: boolean }
   | { type: 'inputRight'; active: boolean }
   | { type: 'fire' }
+  | { type: 'switchWeapon'; index: number }
   | { type: 'pause' }
   | { type: 'resume' };
 
@@ -195,6 +226,98 @@ type Action =
 let _nextId = 1;
 function nextId() {
   return _nextId++;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Formation: Spawn-Positionen je Layout
+// ────────────────────────────────────────────────────────────────────────────
+
+function gridPositions(meta: typeof ENEMY_META.white): Array<{ x: number; y: number }> {
+  const formationW = ENEMY_COLS * meta.width + (ENEMY_COLS - 1) * ENEMY_GAP_X;
+  const startX = (LOGICAL_WIDTH - formationW) / 2 + meta.width / 2;
+  const out: Array<{ x: number; y: number }> = [];
+  for (let r = 0; r < ENEMY_ROWS; r++) {
+    for (let c = 0; c < ENEMY_COLS; c++) {
+      out.push({
+        x: startX + c * (meta.width + ENEMY_GAP_X),
+        y: FORMATION_TOP_Y + r * (meta.height + ENEMY_GAP_Y) + meta.height / 2,
+      });
+    }
+  }
+  return out;
+}
+
+function vShapePositions(meta: typeof ENEMY_META.white): Array<{ x: number; y: number }> {
+  // V-Form: mittlere Spalten weiter unten, Ränder oben
+  const out: Array<{ x: number; y: number }> = [];
+  const formationW = ENEMY_COLS * meta.width + (ENEMY_COLS - 1) * ENEMY_GAP_X;
+  const startX = (LOGICAL_WIDTH - formationW) / 2 + meta.width / 2;
+  const center = (ENEMY_COLS - 1) / 2;
+  for (let r = 0; r < ENEMY_ROWS; r++) {
+    for (let c = 0; c < ENEMY_COLS; c++) {
+      const distFromCenter = Math.abs(c - center);
+      // Versatz: in der Mitte tiefer (V-Spitze nach unten)
+      const yOffset = (1 - distFromCenter / center) * meta.height * 1.2;
+      out.push({
+        x: startX + c * (meta.width + ENEMY_GAP_X),
+        y: FORMATION_TOP_Y + r * (meta.height + ENEMY_GAP_Y) + meta.height / 2 + yOffset,
+      });
+    }
+  }
+  return out;
+}
+
+function arrowPositions(meta: typeof ENEMY_META.white): Array<{ x: number; y: number }> {
+  // Pfeilspitze: oberste Reihe schmal, unterste breit (umgekehrtes V)
+  const out: Array<{ x: number; y: number }> = [];
+  const center = (ENEMY_COLS - 1) / 2;
+  const formationW = ENEMY_COLS * meta.width + (ENEMY_COLS - 1) * ENEMY_GAP_X;
+  const startX = (LOGICAL_WIDTH - formationW) / 2 + meta.width / 2;
+  for (let r = 0; r < ENEMY_ROWS; r++) {
+    // Pro Reihe: nur die mittleren Spalten + r weitere drumherum
+    const halfWidth = Math.min(ENEMY_COLS / 2, 1 + r);
+    for (let c = 0; c < ENEMY_COLS; c++) {
+      if (Math.abs(c - center) > halfWidth) continue;
+      out.push({
+        x: startX + c * (meta.width + ENEMY_GAP_X),
+        y: FORMATION_TOP_Y + r * (meta.height + ENEMY_GAP_Y) + meta.height / 2,
+      });
+    }
+  }
+  return out;
+}
+
+function diamondPositions(meta: typeof ENEMY_META.white): Array<{ x: number; y: number }> {
+  // Raute: breiteste Reihe in der Mitte
+  const out: Array<{ x: number; y: number }> = [];
+  const centerCol = (ENEMY_COLS - 1) / 2;
+  const centerRow = (ENEMY_ROWS - 1) / 2;
+  const formationW = ENEMY_COLS * meta.width + (ENEMY_COLS - 1) * ENEMY_GAP_X;
+  const startX = (LOGICAL_WIDTH - formationW) / 2 + meta.width / 2;
+  for (let r = 0; r < ENEMY_ROWS; r++) {
+    const distFromCenterRow = Math.abs(r - centerRow);
+    const halfWidth = ENEMY_COLS / 2 - distFromCenterRow * 1.2;
+    for (let c = 0; c < ENEMY_COLS; c++) {
+      if (Math.abs(c - centerCol) > halfWidth) continue;
+      out.push({
+        x: startX + c * (meta.width + ENEMY_GAP_X),
+        y: FORMATION_TOP_Y + r * (meta.height + ENEMY_GAP_Y) + meta.height / 2,
+      });
+    }
+  }
+  return out;
+}
+
+function positionsForFormation(
+  formation: Formation,
+  meta: typeof ENEMY_META.white,
+): Array<{ x: number; y: number }> {
+  switch (formation) {
+    case 'grid':    return gridPositions(meta);
+    case 'v_shape': return vShapePositions(meta);
+    case 'arrow':   return arrowPositions(meta);
+    case 'diamond': return diamondPositions(meta);
+  }
 }
 
 function makeShields(): Shield[] {
@@ -212,30 +335,23 @@ function makeShields(): Shield[] {
   return shields;
 }
 
-function makeFormation(wave: number): Enemy[] {
+function makeFormation(wave: number, formation: Formation): Enemy[] {
   const type = enemyTypeForWave(wave);
   const meta = ENEMY_META[type];
-  const formationW =
-    ENEMY_COLS * meta.width + (ENEMY_COLS - 1) * ENEMY_GAP_X;
-  const startX = (LOGICAL_WIDTH - formationW) / 2 + meta.width / 2;
+  const positions = positionsForFormation(formation, meta);
   const out: Enemy[] = [];
-  for (let r = 0; r < ENEMY_ROWS; r++) {
-    for (let c = 0; c < ENEMY_COLS; c++) {
-      out.push({
-        id: nextId(),
-        x: startX + c * (meta.width + ENEMY_GAP_X),
-        y:
-          FORMATION_TOP_Y +
-          r * (meta.height + ENEMY_GAP_Y) +
-          meta.height / 2,
-        type,
-        hp: meta.hp,
-        alive: true,
-        hitFlashUntil: 0,
-        bobPhase: (r * ENEMY_COLS + c) * 0.18,
-      });
-    }
-  }
+  positions.forEach((p, i) => {
+    out.push({
+      id: nextId(),
+      x: p.x,
+      y: p.y,
+      type,
+      hp: meta.hp,
+      alive: true,
+      hitFlashUntil: 0,
+      bobPhase: i * 0.18,
+    });
+  });
   return out;
 }
 
@@ -271,6 +387,7 @@ function initialState(): State {
     input: { left: false, right: false },
     enemies: [],
     formation: { dir: 1, moveTimer: 0 },
+    formationType: 'grid',
     playerProjectiles: [],
     enemyProjectiles: [],
     shields: makeShields(),
@@ -288,6 +405,11 @@ function initialState(): State {
     gameOverAt: null,
     bossDefeatTextUntil: 0,
     ppRecent: null,
+    combo: { count: 0, lastKillAt: 0, bestThisRun: 0 },
+    activeWeapon: 0,
+    unlockedWeapons: 1,
+    weaponSwitchedAt: 0,
+    lastStandActivatedAt: 0,
   };
 }
 
@@ -441,22 +563,74 @@ function reducer(state: State, action: Action): State {
     case 'inputRight':
       return { ...state, input: { ...state.input, right: action.active } };
 
+    case 'switchWeapon': {
+      if (state.status !== 'playing') return state;
+      if (action.index < 0 || action.index >= state.unlockedWeapons) return state;
+      if (action.index === state.activeWeapon) return state;
+      return {
+        ...state,
+        activeWeapon: action.index,
+        weaponSwitchedAt: performance.now(),
+      };
+    }
+
     case 'fire': {
       if (state.status !== 'playing') return state;
       const now = performance.now();
-      if (now - state.lastFireAt < PLAYER_FIRE_COOLDOWN_MS) return state;
+      const tech = KI_TECHNIQUES[state.activeWeapon] ?? KI_TECHNIQUES[0];
+      // Letzte-Verteidigung beschleunigt Cooldown
+      const lastStand = state.player.lives === 1;
+      const cooldown = tech.cooldownMs / (lastStand ? LAST_STAND.fireRateMultiplier : 1);
+      if (now - state.lastFireAt < cooldown) return state;
       const isDouble = (state.activeEffects.doubleKi ?? 0) > now;
-      const max = isDouble ? MAX_KI_BLASTS_DOUBLE : MAX_KI_BLASTS;
-      if (state.playerProjectiles.length >= max) return state;
       const baseY = PLAYER_Y - 20;
-      const newProjectiles: Projectile[] = isDouble
-        ? [
-            { id: nextId(), x: state.player.x - 6, y: baseY, vx: 0, vy: -KI_BLAST_SPEED, size: 3, rotation: 0, kind: 'kiblast' },
-            { id: nextId(), x: state.player.x + 6, y: baseY, vx: 0, vy: -KI_BLAST_SPEED, size: 3, rotation: 0, kind: 'kiblast' },
-          ]
-        : [
-            { id: nextId(), x: state.player.x, y: baseY, vx: 0, vy: -KI_BLAST_SPEED, size: 3, rotation: 0, kind: 'kiblast' },
-          ];
+      const newProjectiles: Projectile[] = [];
+      const px = state.player.x;
+      switch (tech.id) {
+        case 'ki_blast': {
+          const max = isDouble ? MAX_KI_BLASTS_DOUBLE : MAX_KI_BLASTS;
+          // Anzahl bereits aktiver kiblast/shockwave/piercing
+          const active = state.playerProjectiles.filter((p) =>
+            ['kiblast', 'shockwave', 'piercing'].includes(p.kind),
+          ).length;
+          if (active >= max) return state;
+          if (isDouble) {
+            newProjectiles.push(
+              { id: nextId(), x: px - 6, y: baseY, vx: 0, vy: -KI_BLAST_SPEED, size: 3, rotation: 0, kind: 'kiblast' },
+              { id: nextId(), x: px + 6, y: baseY, vx: 0, vy: -KI_BLAST_SPEED, size: 3, rotation: 0, kind: 'kiblast' },
+            );
+          } else {
+            newProjectiles.push(
+              { id: nextId(), x: px, y: baseY, vx: 0, vy: -KI_BLAST_SPEED, size: 3, rotation: 0, kind: 'kiblast' },
+            );
+          }
+          break;
+        }
+        case 'shockwave': {
+          // 3er-Fächer
+          newProjectiles.push(
+            { id: nextId(), x: px - 12, y: baseY, vx: -60, vy: -KI_BLAST_SPEED * 0.92, size: 3, rotation: 0, kind: 'shockwave' },
+            { id: nextId(), x: px,      y: baseY, vx: 0,   vy: -KI_BLAST_SPEED, size: 3, rotation: 0, kind: 'shockwave' },
+            { id: nextId(), x: px + 12, y: baseY, vx: 60,  vy: -KI_BLAST_SPEED * 0.92, size: 3, rotation: 0, kind: 'shockwave' },
+          );
+          break;
+        }
+        case 'piercing': {
+          newProjectiles.push({
+            id: nextId(),
+            x: px,
+            y: baseY,
+            vx: 0,
+            vy: -KI_BLAST_SPEED * 1.25,
+            size: 4,
+            rotation: 0,
+            kind: 'piercing',
+            piercing: true,
+            hitEnemyIds: [],
+          });
+          break;
+        }
+      }
       return {
         ...state,
         playerProjectiles: [...state.playerProjectiles, ...newProjectiles],
@@ -509,18 +683,50 @@ function tick(state: State, dtRaw: number, now: number): State {
       .filter((p) => p.y > -20),
   };
 
-  // ── Enemy-Projektile (mit Zanshin-Slowdown) ──
+  // ── Enemy-Projektile (mit Zanshin-Slowdown) + Homing für black-belt ──
   s = {
     ...s,
     enemyProjectiles: s.enemyProjectiles
-      .map((p) => ({
-        ...p,
-        x: p.x + p.vx * enemyDts,
-        y: p.y + p.vy * enemyDts,
-        rotation: p.rotation + SHURIKEN_ROT_SPEED * enemyDts,
-      }))
+      .map((p) => {
+        let { vx, vy } = p;
+        // Homing: leichte Kurskorrektur Richtung Spieler (max ~1°/Frame)
+        if (p.kind === 'homingShuriken') {
+          const dx = s.player.x - p.x;
+          const dy = PLAYER_Y - 20 - p.y;
+          const targetAngle = Math.atan2(dy, dx);
+          const currentAngle = Math.atan2(vy, vx);
+          let angleDiff = targetAngle - currentAngle;
+          while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+          while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+          const correction = Math.max(-0.025, Math.min(0.025, angleDiff));
+          const newAngle = currentAngle + correction;
+          const speed = Math.hypot(vx, vy);
+          vx = Math.cos(newAngle) * speed;
+          vy = Math.sin(newAngle) * speed;
+        }
+        return {
+          ...p,
+          vx,
+          vy,
+          x: p.x + vx * enemyDts,
+          y: p.y + vy * enemyDts,
+          rotation: p.rotation + SHURIKEN_ROT_SPEED * enemyDts,
+        };
+      })
       .filter((p) => p.y < LOGICAL_HEIGHT + 20 && p.x > -20 && p.x < LOGICAL_WIDTH + 20),
   };
+
+  // ── Combo-Decay ──
+  if (s.combo.count > 0 && now - s.combo.lastKillAt > COMBO_WINDOW_MS) {
+    s = { ...s, combo: { ...s.combo, count: 0 } };
+  }
+
+  // ── Letzte Verteidigung Activation-Detection ──
+  if (s.player.lives === 1 && s.lastStandActivatedAt === 0) {
+    s = { ...s, lastStandActivatedAt: now };
+  } else if (s.player.lives !== 1 && s.lastStandActivatedAt !== 0) {
+    s = { ...s, lastStandActivatedAt: 0 };
+  }
 
   // ── Power-Ups ──
   s = {
@@ -583,24 +789,33 @@ function tick(state: State, dtRaw: number, now: number): State {
 
 function enterWave(state: State): State {
   const wave = state.wave;
+  const newUnlocked = unlockedWeaponsForWave(wave);
+  const baseUpdate = {
+    ...state,
+    unlockedWeapons: newUnlocked,
+    activeWeapon: Math.min(state.activeWeapon, newUnlocked - 1),
+  };
   if (isBossWave(wave)) {
     return {
-      ...state,
+      ...baseUpdate,
       status: 'playing',
       announce: null,
       enemies: [],
       boss: makeBoss(wave),
       formation: { dir: 1, moveTimer: 0 },
+      formationType: 'grid',
       enemyProjectiles: [],
     };
   }
+  const formation = formationForWave(wave);
   return {
-    ...state,
+    ...baseUpdate,
     status: 'playing',
     announce: null,
-    enemies: makeFormation(wave),
+    enemies: makeFormation(wave, formation),
     boss: null,
     formation: { dir: 1, moveTimer: 0 },
+    formationType: formation,
     enemyProjectiles: [],
   };
 }
@@ -658,7 +873,6 @@ function maybeEnemyFire(state: State, dts: number): State {
   const aliveByCol = new Map<number, Enemy>();
   for (const e of state.enemies) {
     if (!e.alive) continue;
-    // Approximate column index by x
     const col = Math.round(e.x);
     const existing = aliveByCol.get(col);
     if (!existing || e.y > existing.y) aliveByCol.set(col, e);
@@ -667,21 +881,59 @@ function maybeEnemyFire(state: State, dts: number): State {
   if (arr.length === 0) return state;
   const shooter = arr[Math.floor(Math.random() * arr.length)];
 
+  // Schussmuster je nach Belt-Type
+  let projectile: Projectile;
+  switch (shooter.type) {
+    case 'white':
+      projectile = {
+        id: nextId(),
+        x: shooter.x, y: shooter.y + 12,
+        vx: 0, vy: SHURIKEN_SPEED,
+        size: SHURIKEN_SIZE, rotation: 0, kind: 'shuriken',
+      };
+      break;
+    case 'blue':
+      // Schneller, geradeaus
+      projectile = {
+        id: nextId(),
+        x: shooter.x, y: shooter.y + 12,
+        vx: 0, vy: SHURIKEN_SPEED * 1.4,
+        size: SHURIKEN_SIZE, rotation: 0, kind: 'shuriken',
+      };
+      break;
+    case 'brown': {
+      // Diagonal Richtung Spieler (mit leichter Streuung)
+      const dx = (state.player.x - shooter.x);
+      const dy = (PLAYER_Y - shooter.y);
+      const dist = Math.hypot(dx, dy);
+      const speed = SHURIKEN_SPEED * 1.1;
+      const spread = (Math.random() - 0.5) * 0.25;
+      const angle = Math.atan2(dy, dx) + spread;
+      projectile = {
+        id: nextId(),
+        x: shooter.x, y: shooter.y + 12,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        size: SHURIKEN_SIZE, rotation: 0, kind: 'diagonalShuriken',
+      };
+      // unused dist
+      void dist;
+      break;
+    }
+    case 'black':
+      // Homing
+      projectile = {
+        id: nextId(),
+        x: shooter.x, y: shooter.y + 12,
+        vx: 0, vy: SHURIKEN_SPEED * 0.95,
+        size: SHURIKEN_SIZE + 1, rotation: 0, kind: 'homingShuriken',
+      };
+      break;
+  }
+
   return {
     ...state,
-    enemyProjectiles: [
-      ...state.enemyProjectiles,
-      {
-        id: nextId(),
-        x: shooter.x,
-        y: shooter.y + 12,
-        vx: 0,
-        vy: SHURIKEN_SPEED,
-        size: SHURIKEN_SIZE,
-        rotation: 0,
-        kind: 'shuriken',
-      },
-    ],
+    enemyProjectiles: [...state.enemyProjectiles, projectile],
   };
 }
 
@@ -736,7 +988,7 @@ function handleCollisions(state: State, now: number): State {
   }
   s = { ...s, playerProjectiles: ppKeep, shields: shieldsCopy };
 
-  // Player-Projektile vs Gegner
+  // Player-Projektile vs Gegner (mit Piercing + Combo)
   if (s.enemies.length > 0) {
     const ppKeep2: Projectile[] = [];
     const enemiesCopy = [...s.enemies];
@@ -744,22 +996,38 @@ function handleCollisions(state: State, now: number): State {
     let enemiesKilled = 0;
     let newPowerUps: PowerUp[] = [];
     let newParticles: Particle[] = [];
+    let newCombo = s.combo;
+    const lastStand = s.player.lives === 1;
+    const lsScoreMult = lastStand ? LAST_STAND.scoreMultiplier : 1;
+
     for (const p of s.playerProjectiles) {
+      const isPiercing = p.piercing === true;
+      const hitIds = p.hitEnemyIds ?? [];
       let consumed = false;
       for (let i = 0; i < enemiesCopy.length; i++) {
         const e = enemiesCopy[i];
         if (!e.alive) continue;
+        if (isPiercing && hitIds.includes(e.id)) continue;
         const meta = ENEMY_META[e.type];
         if (aabb(p.x, p.y, p.size * 2, p.size * 4, e.x, e.y, meta.width, meta.height)) {
           const newHp = e.hp - 1;
           if (newHp <= 0) {
             enemiesCopy[i] = { ...e, alive: false };
-            scoreDelta += meta.score;
+            // Combo-Increment + Multiplier auf Score
+            const nextCount = newCombo.count + 1;
+            const tier = tierForCombo(nextCount);
+            const comboMult = tier ? tier.multiplier : 1;
+            const earned = Math.round(meta.score * comboMult * lsScoreMult);
+            scoreDelta += earned;
             enemiesKilled++;
+            newCombo = {
+              count: nextCount,
+              lastKillAt: now,
+              bestThisRun: Math.max(newCombo.bestThisRun, nextCount),
+            };
             newParticles = newParticles.concat(
               explodeParticles(e.x, e.y, meta.color === 'rgba(212, 201, 181, 0.85)' ? '#d4c9b5' : meta.color, 6, 0.12),
             );
-            // Powerup chance
             if (Math.random() < POWERUP_DROP_CHANCE) {
               newPowerUps.push({
                 id: nextId(),
@@ -771,11 +1039,16 @@ function handleCollisions(state: State, now: number): State {
           } else {
             enemiesCopy[i] = { ...e, hp: newHp, hitFlashUntil: now + 80 };
           }
-          consumed = true;
-          break;
+          if (isPiercing) {
+            hitIds.push(e.id);
+            // Piercing fliegt weiter, nicht consumed
+          } else {
+            consumed = true;
+            break;
+          }
         }
       }
-      if (!consumed) ppKeep2.push(p);
+      if (!consumed) ppKeep2.push({ ...p, hitEnemyIds: hitIds });
     }
     s = {
       ...s,
@@ -785,6 +1058,7 @@ function handleCollisions(state: State, now: number): State {
       enemiesDefeated: s.enemiesDefeated + enemiesKilled,
       powerUps: [...s.powerUps, ...newPowerUps],
       particles: [...s.particles, ...newParticles],
+      combo: newCombo,
     };
   }
 
@@ -1001,6 +1275,10 @@ export function useSpaceInvadersGame() {
     (active: boolean) => dispatch({ type: 'inputRight', active }),
     [],
   );
+  const switchWeapon = useCallback(
+    (index: number) => dispatch({ type: 'switchWeapon', index }),
+    [],
+  );
 
   // Belt info derived
   const belt = beltForWaves(state.wavesSurvived);
@@ -1016,5 +1294,6 @@ export function useSpaceInvadersGame() {
     fire,
     inputLeft,
     inputRight,
+    switchWeapon,
   };
 }

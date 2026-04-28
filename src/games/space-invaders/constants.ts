@@ -166,3 +166,93 @@ export function bossColorForWave(wave: number): { fill: string; glow?: string; b
   if (n === 2) return { fill: '#6d1723', beltColor: '#2a2a2a' };
   return { fill: '#6d1723', glow: 'rgba(220, 13, 29, 0.45)', beltColor: '#2a2a2a', goldRim: true };
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// KI-TECHNIKEN (3 Waffen, automatisch freigeschaltet nach Welle)
+// ────────────────────────────────────────────────────────────────────────────
+
+export type KiTechniqueId = 'ki_blast' | 'shockwave' | 'piercing';
+
+export interface KiTechnique {
+  id: KiTechniqueId;
+  name: string;
+  kanji: string;
+  unlockWave: number;
+  cooldownMs: number;
+  description: string;
+}
+
+export const KI_TECHNIQUES: KiTechnique[] = [
+  { id: 'ki_blast',  name: 'Ki-Blast',   kanji: '気', unlockWave: 1, cooldownMs: 380, description: 'Standard-Schuss' },
+  { id: 'shockwave', name: 'Schockwelle', kanji: '波', unlockWave: 4, cooldownMs: 560, description: '3er-Fächer' },
+  { id: 'piercing',  name: 'Durchbruch',  kanji: '貫', unlockWave: 7, cooldownMs: 720, description: 'Durchdringend' },
+];
+
+export function unlockedWeaponsForWave(wave: number): number {
+  if (wave >= 7) return 3;
+  if (wave >= 4) return 2;
+  return 1;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// COMBO-SYSTEM
+// ────────────────────────────────────────────────────────────────────────────
+
+export const COMBO_WINDOW_MS = 2200;
+
+export interface ComboTier {
+  min: number;
+  name: string;
+  multiplier: number;
+  color: string;
+  isGold?: boolean;
+}
+
+export const COMBO_TIERS: ComboTier[] = [
+  { min: 3,  name: 'REN-ZUKI',     multiplier: 1.5, color: '#d4c9b5' },
+  { min: 5,  name: 'KATA',         multiplier: 2.0, color: '#dc0d1d' },
+  { min: 8,  name: 'SENPAI',       multiplier: 2.5, color: '#dc0d1d' },
+  { min: 12, name: 'SENSEI',       multiplier: 3.0, color: '#d4a017', isGold: true },
+  { min: 20, name: 'GROSSMEISTER', multiplier: 4.0, color: '#d4a017', isGold: true },
+];
+
+export function tierForCombo(combo: number): ComboTier | null {
+  let result: ComboTier | null = null;
+  for (const t of COMBO_TIERS) {
+    if (combo >= t.min) result = t;
+  }
+  return result;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// LETZTE VERTEIDIGUNG (bei lives === 1)
+// ────────────────────────────────────────────────────────────────────────────
+
+export const LAST_STAND = {
+  fireRateMultiplier: 1.3,    // 30% schneller schießen
+  scoreMultiplier: 1.5,       // 50% mehr Punkte
+  playerSizeMultiplier: 1.15, // 15% größeres Hitbox
+} as const;
+
+// ────────────────────────────────────────────────────────────────────────────
+// FORMATIONEN
+// ────────────────────────────────────────────────────────────────────────────
+
+export type Formation = 'grid' | 'v_shape' | 'arrow' | 'diamond';
+
+export function formationForWave(wave: number): Formation {
+  // Boss-Wellen kümmern sich nicht um Formation — nur reguläre.
+  if (wave <= 3) return 'grid';
+  // Ab Welle 4: zyklisch wechseln (deterministisch pro Welle)
+  const variants: Formation[] = ['v_shape', 'arrow', 'diamond', 'grid'];
+  return variants[(wave - 4) % variants.length];
+}
+
+export function formationLabel(f: Formation): string {
+  switch (f) {
+    case 'grid':    return 'Klassische Formation';
+    case 'v_shape': return 'V-Formation';
+    case 'arrow':   return 'Pfeilspitze';
+    case 'diamond': return 'Rauten-Formation';
+  }
+}

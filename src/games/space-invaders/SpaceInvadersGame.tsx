@@ -5,6 +5,8 @@ import { useSpaceInvadersGame } from './useSpaceInvadersGame';
 import {
   PLAYER_BELTS,
   POWERUP_DURATIONS_MS,
+  KI_TECHNIQUES,
+  tierForCombo,
   type EnemyType,
 } from './constants';
 import { drawEnemy, drawHeartFighter, drawPowerUp } from './sprites';
@@ -220,6 +222,7 @@ export default function SpaceInvadersGame() {
     fire,
     inputLeft,
     inputRight,
+    switchWeapon,
   } = useSpaceInvadersGame();
   const { user } = useAuth();
   const [bestScore, setBestScore] = useState(0);
@@ -302,6 +305,18 @@ export default function SpaceInvadersGame() {
           if (state.status === 'playing') pause();
           else if (state.status === 'paused') resume();
           return;
+        case '1':
+          e.preventDefault();
+          switchWeapon(0);
+          return;
+        case '2':
+          e.preventDefault();
+          switchWeapon(1);
+          return;
+        case '3':
+          e.preventDefault();
+          switchWeapon(2);
+          return;
       }
     };
     const onKeyUp = (e: KeyboardEvent) => {
@@ -324,7 +339,7 @@ export default function SpaceInvadersGame() {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
     };
-  }, [state.status, start, pause, resume, fire, inputLeft, inputRight]);
+  }, [state.status, start, pause, resume, fire, inputLeft, inputRight, switchWeapon]);
 
   // Game Over: Highscore speichern
   useEffect(() => {
@@ -415,6 +430,27 @@ export default function SpaceInvadersGame() {
           </span>
         </div>
         <HeartsBar lives={state.player.lives} />
+        {/* Combo */}
+        {state.combo.count >= 3 && (() => {
+          const tier = tierForCombo(state.combo.count);
+          if (!tier) return null;
+          return (
+            <span
+              className="rp-display"
+              style={{
+                fontSize: '17px',
+                letterSpacing: '0.08em',
+                color: tier.color,
+                textShadow: tier.isGold
+                  ? '0 0 10px rgba(212, 160, 23, 0.7)'
+                  : '0 0 8px rgba(220, 13, 29, 0.45)',
+                animation: 'rp-combo-pulse 800ms ease-in-out infinite',
+              }}
+            >
+              {state.combo.count}× {tier.name}
+            </span>
+          );
+        })()}
         <div className="flex items-center gap-2">
           <span
             className="block w-6 h-1.5 rounded-full"
@@ -429,6 +465,22 @@ export default function SpaceInvadersGame() {
           </span>
         </div>
       </div>
+
+      {/* Letzte Verteidigung Banner */}
+      {state.player.lives === 1 && state.status === 'playing' && (
+        <div className="flex items-center justify-center">
+          <span
+            className="rp-display rp-pulse-glow text-sm"
+            style={{
+              color: '#dc0d1d',
+              letterSpacing: '0.12em',
+              textShadow: '0 0 12px rgba(220, 13, 29, 0.7)',
+            }}
+          >
+            ★ Letzte Verteidigung ★
+          </span>
+        </div>
+      )}
 
       {/* Active effect badges */}
       {(effectShield > 0 || effectDouble > 0 || effectZanshin > 0) && (
@@ -664,8 +716,62 @@ export default function SpaceInvadersGame() {
         </HoldButton>
       </div>
 
+      {/* Waffen-Slots */}
+      <div className="flex items-center justify-center gap-2 mt-1">
+        {KI_TECHNIQUES.map((tech, i) => {
+          const unlocked = i < state.unlockedWeapons;
+          const active = i === state.activeWeapon;
+          return (
+            <button
+              key={tech.id}
+              type="button"
+              onClick={() => unlocked && switchWeapon(i)}
+              disabled={!unlocked}
+              className="flex flex-col items-center justify-center gap-0.5 transition-all duration-rp"
+              style={{
+                width: 72,
+                height: 48,
+                borderRadius: 8,
+                background: active
+                  ? 'rgba(220, 13, 29, 0.18)'
+                  : unlocked
+                    ? 'rgba(30, 30, 30, 0.6)'
+                    : 'rgba(30, 30, 30, 0.3)',
+                border: active
+                  ? '1px solid rgba(220, 13, 29, 0.5)'
+                  : '1px solid rgba(212, 201, 181, 0.12)',
+                opacity: unlocked ? 1 : 0.4,
+                cursor: unlocked ? 'pointer' : 'not-allowed',
+              }}
+              aria-label={`${tech.name} (${i + 1})`}
+            >
+              <span
+                className="font-serif"
+                style={{
+                  color: active ? '#dc0d1d' : '#d4c9b5',
+                  fontSize: '16px',
+                  opacity: 0.85,
+                }}
+              >
+                {tech.kanji}
+              </span>
+              <span
+                className="rp-mono uppercase"
+                style={{
+                  fontSize: '9px',
+                  letterSpacing: '0.05em',
+                  color: active ? '#ffffff' : '#a0a0a0',
+                }}
+              >
+                {!unlocked ? `🔒 W.${tech.unlockWave}` : `${i + 1} ${tech.name}`}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
       <p className="hidden sm:block text-xs text-rp-text-muted rp-mono text-center">
-        ← → bewegen · Leertaste = Feuer · Esc/P pausiert
+        ← → bewegen · Leertaste = Feuer · 1/2/3 Waffe · Esc/P pausiert
       </p>
 
       {!isSupabaseConfigured && (
