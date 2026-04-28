@@ -27,6 +27,7 @@ import {
 } from './tetrisConstants';
 import { drawBoard, drawPiecePreview, type Particle } from './tetrisRenderer';
 import { isSupabaseConfigured } from '../../lib/supabase';
+import { isInputActive } from '../../lib/keyboard';
 import NameInputForm from '../../components/NameInputForm';
 
 const HIGHSCORE_KEY = 'randori-pro-arcade.tetris.highscore';
@@ -563,6 +564,7 @@ export default function TetrisGame() {
   // Tastatur
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (isInputActive()) return;
       if (
         e.repeat &&
         (e.key === ' ' ||

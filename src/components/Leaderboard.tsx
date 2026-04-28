@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { loadHighscores } from '../lib/highscores';
 import type { GameSlug, TopScore } from '../types';
 
 interface Props {
@@ -14,32 +14,17 @@ export default function Leaderboard({ game, limit = 10 }: Props) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!isSupabaseConfigured) {
-      setLoading(false);
-      return;
-    }
-
-    let q = supabase
-      .from('top_scores')
-      .select('*')
-      .order('score', { ascending: false })
-      .limit(limit);
-    if (game) q = q.eq('game', game);
-
-    q.then(({ data, error }) => {
-      if (error) console.error(error);
-      else setScores((data ?? []) as TopScore[]);
+    let cancelled = false;
+    setLoading(true);
+    loadHighscores(game, limit).then((data) => {
+      if (cancelled) return;
+      setScores(data);
       setLoading(false);
     });
+    return () => {
+      cancelled = true;
+    };
   }, [game, limit]);
-
-  if (!isSupabaseConfigured) {
-    return (
-      <div className="rp-panel p-5 text-sm text-rp-text-secondary">
-        Supabase nicht konfiguriert — Highscores erscheinen nach dem Setup.
-      </div>
-    );
-  }
 
   if (loading) {
     return (
@@ -85,7 +70,7 @@ export default function Leaderboard({ game, limit = 10 }: Props) {
                 }}
               >
                 <td className="px-4 py-3 rp-mono text-rp-text-secondary">
-                  {s.rank}
+                  {i + 1}
                 </td>
                 <td className="px-4 py-3 text-white font-semibold">
                   {s.display_name || s.username}

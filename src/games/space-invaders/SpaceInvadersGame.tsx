@@ -12,6 +12,7 @@ import {
 import { drawEnemy, drawHeartFighter, drawPowerUp } from './sprites';
 import type { PowerUpKind } from './sprites';
 import { isSupabaseConfigured } from '../../lib/supabase';
+import { isInputActive } from '../../lib/keyboard';
 import NameInputForm from '../../components/NameInputForm';
 
 const HIGHSCORE_KEY = 'randori-pro-arcade.invaders.highscore';
@@ -278,6 +279,7 @@ export default function SpaceInvadersGame() {
   // Tastatur
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      if (isInputActive()) return;
       if (e.repeat) return;
       switch (e.key) {
         case 'ArrowLeft':
@@ -319,6 +321,7 @@ export default function SpaceInvadersGame() {
       }
     };
     const onKeyUp = (e: KeyboardEvent) => {
+      if (isInputActive()) return;
       switch (e.key) {
         case 'ArrowLeft':
         case 'a':

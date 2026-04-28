@@ -12,6 +12,7 @@ import NumberPad from './NumberPad';
 import BeltProgress from './BeltProgress';
 import BreathTimer from './BreathTimer';
 import { isSupabaseConfigured } from '../../lib/supabase';
+import { isInputActive } from '../../lib/keyboard';
 import NameInputForm from '../../components/NameInputForm';
 
 function useScoreCounter(target: number, active: boolean, duration = 1500) {
@@ -312,6 +313,7 @@ export default function SudokuGame() {
   // Keyboard
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (isInputActive()) return;
       if (e.key === 'p' || e.key === 'P') {
         togglePause();
         return;

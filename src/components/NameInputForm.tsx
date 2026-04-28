@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { isSupabaseConfigured } from '../lib/supabase';
 import { loadPlayerName, saveScore } from '../lib/highscores';
 import type { GameSlug } from '../types';
 
@@ -13,16 +12,9 @@ interface Props {
 export default function NameInputForm({ game, score, level, metadata }: Props) {
   const [name, setName] = useState(() => loadPlayerName());
   const [saved, setSaved] = useState(false);
+  const [savedMode, setSavedMode] = useState<'cloud' | 'local'>('cloud');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  if (!isSupabaseConfigured) {
-    return (
-      <p className="text-[11px] text-rp-text-muted text-center">
-        Bestenliste momentan nicht verfügbar.
-      </p>
-    );
-  }
 
   if (score <= 0) return null;
 
@@ -32,7 +24,9 @@ export default function NameInputForm({ game, score, level, metadata }: Props) {
         className="text-[11px] uppercase tracking-rp-tight font-semibold text-center"
         style={{ color: '#d4a017' }}
       >
-        ✓ In Bestenliste eingetragen
+        {savedMode === 'cloud'
+          ? '✓ In Bestenliste eingetragen'
+          : '✓ Lokal gespeichert'}
       </p>
     );
   }
@@ -46,6 +40,7 @@ export default function NameInputForm({ game, score, level, metadata }: Props) {
     setBusy(false);
     if (result.ok) {
       setSaved(true);
+      setSavedMode(result.mode);
     } else {
       setError(result.error ?? 'Speichern fehlgeschlagen');
     }
@@ -65,6 +60,7 @@ export default function NameInputForm({ game, score, level, metadata }: Props) {
           maxLength={24}
           required
           autoComplete="off"
+          autoFocus
           className="flex-1 bg-[#0f0f0f] border border-[rgba(212,201,181,0.2)] focus:border-rp-rot focus:outline-none rounded-rp-sm px-3 py-1.5 text-sm text-white"
         />
         <button

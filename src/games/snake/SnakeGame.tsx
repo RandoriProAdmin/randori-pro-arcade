@@ -26,6 +26,7 @@ import {
   type SnakeParticle,
 } from './snakeRenderer';
 import { isSupabaseConfigured } from '../../lib/supabase';
+import { isInputActive } from '../../lib/keyboard';
 import NameInputForm from '../../components/NameInputForm';
 
 const HIGHSCORE_KEY = 'randori-pro-arcade.snake.highscore';
@@ -353,7 +354,7 @@ export default function SnakeGame() {
     if (tatamiRef.current) {
       ctx.drawImage(tatamiRef.current.canvas, 0, 0);
     } else {
-      ctx.fillStyle = '#0f0f0f';
+      ctx.fillStyle = '#474e52';
       ctx.fillRect(0, 0, cssSize, cssSize);
     }
 
@@ -500,6 +501,8 @@ export default function SnakeGame() {
   // ────────────── Tastatur ──────────────
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Texteingabe hat Vorrang — Tastatur-Events nicht abfangen
+      if (isInputActive()) return;
       if (e.key === ' ') {
         if (state.status === 'idle') {
           e.preventDefault();
