@@ -4,40 +4,50 @@ export const COLS = 10;
 export const ROWS = 20;
 
 // Visuelle Timings (ms)
-export const FLASH_MS = 280;       // Linie-Clear: weiße Blitz + Kontraktion
-export const LINE_TEXT_MS = 900;   // Wie lange "OSS!"/"IPPON!" bleibt
-export const LEVELUP_MS = 1500;    // Level-Up-Banner
+export const FLASH_MS = 280;
+export const LINE_TEXT_MS = 900;
+export const LEVELUP_MS = 1500;
 export const COMBO_TEXT_MS = 1300;
-export const STACKOUT_MS = 600;    // Game-Over Stack-Out Animation
-export const SHAKE_MS = 200;       // IPPON-Shake-Dauer
-export const LEVELUP_GLOW_MS = 700;// Level-Up Border-Glow
+export const STACKOUT_MS = 600;
+export const SHAKE_MS = 200;
+export const LEVELUP_GLOW_MS = 700;
 
 export const LINES_PER_BELT = 8;
 
 export type PieceType = 'I' | 'O' | 'T' | 'S' | 'Z' | 'J' | 'L';
 
+// Minimalistische Block-Icons (eines pro Tetromino-Typ)
+export type BlockIcon =
+  | 'staff'
+  | 'fist'
+  | 'kick'
+  | 'sweep'
+  | 'grip'
+  | 'block_up'
+  | 'strike_down';
+
 export interface PieceMeta {
   color: string;
   glow: string;
-  kanji: string;
-  technique: string;
+  kanji: string;       // Nur in der "Nächste Technik"-Vorschau
+  technique: string;   // Anzeige-Name
+  icon: BlockIcon;     // Auf den Block geprägt
 }
 
-// Jeder Tetromino = eine Kampfsport-Technik mit eigener Silhouette
+// Neue, kräftigere Farben + ein klares Icon pro Typ
 export const PIECE_META: Record<PieceType, PieceMeta> = {
-  I: { color: '#dc0d1d', glow: 'rgba(220, 13, 29, 0.40)', kanji: '突', technique: 'Bo-Stab' },
-  O: { color: '#d4c9b5', glow: 'rgba(212, 201, 181, 0.30)', kanji: '拳', technique: 'Faust' },
-  T: { color: '#aa1a1d', glow: 'rgba(170, 26, 29, 0.40)', kanji: '蹴', technique: 'Frontkick' },
-  S: { color: '#2a7d47', glow: 'rgba(42, 125, 71, 0.40)', kanji: '払', technique: 'Beinsweep' },
-  Z: { color: '#c4652a', glow: 'rgba(196, 101, 42, 0.40)', kanji: '投', technique: 'Hüftwurf' },
-  J: { color: '#6d1723', glow: 'rgba(109, 23, 35, 0.45)', kanji: '上', technique: 'Aufwärts-Block' },
-  L: { color: '#2454a0', glow: 'rgba(36, 84, 160, 0.45)', kanji: '下', technique: 'Abwärts-Stoß' },
+  I: { color: '#c43030', glow: 'rgba(196, 48, 48, 0.45)',  kanji: '棒', technique: 'Bo-Stab',  icon: 'staff' },
+  O: { color: '#c4a868', glow: 'rgba(196, 168, 104, 0.30)', kanji: '拳', technique: 'Faust',    icon: 'fist' },
+  T: { color: '#8a2030', glow: 'rgba(138, 32, 48, 0.45)',  kanji: '蹴', technique: 'Tritt',    icon: 'kick' },
+  S: { color: '#2a7d47', glow: 'rgba(42, 125, 71, 0.40)',  kanji: '払', technique: 'Feger',    icon: 'sweep' },
+  Z: { color: '#b85a1e', glow: 'rgba(184, 90, 30, 0.40)',  kanji: '投', technique: 'Wurf',     icon: 'grip' },
+  L: { color: '#2454a0', glow: 'rgba(36, 84, 160, 0.45)',  kanji: '受', technique: 'Abwehr',   icon: 'block_up' },
+  J: { color: '#6d1723', glow: 'rgba(109, 23, 35, 0.50)',  kanji: '突', technique: 'Stoß',     icon: 'strike_down' },
 };
 
 export const PIECE_TYPES: PieceType[] = ['I', 'O', 'T', 'S', 'Z', 'J', 'L'];
 
-// SHAPES sind Spawn-Orientierung (rotation = 0). Renderer rotiert per Canvas-Transform.
-// T spawnt mit Bump nach oben (3 oben, 1 bottom-middle) — Standard SRS.
+// SHAPES sind Spawn-Orientierung. T spawnt mit Bump nach oben (Standard SRS).
 export const PIECE_SHAPES: Record<PieceType, number[][]> = {
   I: [
     [0, 0, 0, 0],
@@ -74,18 +84,6 @@ export const PIECE_SHAPES: Record<PieceType, number[][]> = {
     [1, 1, 1],
     [0, 0, 0],
   ],
-};
-
-// "Natürliche" (Spawn-)Bounding-Box für die Silhouetten-Rendering-Boxen.
-// Spalten × Reihen.
-export const PIECE_NATURAL_BOUNDS: Record<PieceType, { w: number; h: number }> = {
-  I: { w: 4, h: 1 },
-  O: { w: 2, h: 2 },
-  T: { w: 3, h: 2 },
-  S: { w: 3, h: 2 },
-  Z: { w: 3, h: 2 },
-  J: { w: 3, h: 2 },
-  L: { w: 3, h: 2 },
 };
 
 // 10 Level = 7 Belts + 3 Dans + Meister
