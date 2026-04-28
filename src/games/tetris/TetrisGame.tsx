@@ -20,8 +20,12 @@ import {
   comboMultiplier,
   STACKOUT_MS,
   FLASH_MS,
+  SHAKE_MS,
+  LEVELUP_GLOW_MS,
+  COLS as TETRIS_COLS,
+  ROWS as TETRIS_ROWS,
 } from './tetrisConstants';
-import { drawBoard, drawPiecePreview } from './tetrisRenderer';
+import { drawBoard, drawPiecePreview, type Particle } from './tetrisRenderer';
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
 import { useAuth } from '../../hooks/useAuth';
 
@@ -231,6 +235,21 @@ export default function TetrisGame() {
   const stateRef = useRef(state);
   stateRef.current = state;
   const stackOutAtRef = useRef<number | null>(null);
+  const particlesRef = useRef<Particle[]>([]);
+  const bgParticlesRef = useRef<Particle[]>([]);
+  const lastFrameAtRef = useRef<number>(performance.now());
+  const shakeUntilRef = useRef<number>(0);
+  const glowUntilRef = useRef<number>(0);
+  const glowColorRef = useRef<string>('rgba(220, 13, 29, 0.5)');
+  const lineFragKeyRef = useRef('');
+  const pendingLevelUpRef = useRef<string | null>(null);
+
+  // Effekte (UI-State für CSS-Class-Toggles)
+  const [shakeKey, setShakeKey] = useState(0);
+  const [borderGlow, setBorderGlow] = useState<string | null>(null);
+  const [scoreFloat, setScoreFloat] = useState<{ delta: number; id: number } | null>(null);
+  const [scorePulseKey, setScorePulseKey] = useState(0);
+  const lastScoreRef = useRef(state.score);
 
   // Transient Overlays (DOM)
   const [lineText, setLineText] = useState<{
@@ -258,7 +277,7 @@ export default function TetrisGame() {
     }
   }, []);
 
-  // Linie-Clear: Text-Overlay starten
+  // Linie-Clear: Text-Overlay + Partikel + IPPON-Shake
   const lastClearKeyRef = useRef('');
   useEffect(() => {
     if (state.status !== 'lineflash') return;
@@ -278,9 +297,18 @@ export default function TetrisGame() {
         setComboText((cur) => (cur && cur.id === cid ? null : cur));
       }, COMBO_TEXT_MS);
     }
+
+    // IPPON: Shake + goldene Partikel
+    if (state.lastClearCount === 4) {
+      shakeUntilRef.current = performance.now() + SHAKE_MS;
+      setShakeKey((k) => k + 1);
+    }
+
+    // Marker für Render-Loop, dass beim nächsten Frame Fragmente gespawnt werden
+    lineFragKeyRef.current = key;
   }, [state.status, state.flashStartedAt, state.lastClearCount, state.combo]);
 
-  // Level-Up Banner (wenn beltIndex steigt während des Spiels)
+  // Level-Up Banner + Border-Glow + Funkenregen
   const lastBeltRef = useRef(state.beltIndex);
   useEffect(() => {
     if (state.beltIndex > lastBeltRef.current && state.status !== 'idle') {
@@ -289,9 +317,32 @@ export default function TetrisGame() {
       window.setTimeout(() => {
         setLevelUpBanner((cur) => (cur && cur.id === id ? null : cur));
       }, LEVELUP_MS);
+      // Border-Glow in neuer Belt-Farbe
+      const beltGlow = BELT_LEVELS[state.beltIndex]?.glow ?? 'rgba(255,255,255,0.3)';
+      glowUntilRef.current = performance.now() + LEVELUP_GLOW_MS;
+      glowColorRef.current = beltGlow;
+      setBorderGlow(beltGlow);
+      window.setTimeout(() => setBorderGlow(null), LEVELUP_GLOW_MS);
+      // Funkenregen von oben — wird im Render-Loop gespawnt (kennt cssWidth)
+      const beltHex = BELT_LEVELS[state.beltIndex]?.hex ?? '#ffffff';
+      pendingLevelUpRef.current = beltHex;
     }
     lastBeltRef.current = state.beltIndex;
   }, [state.beltIndex, state.level, state.status]);
+
+  // Score-Float und Pulse bei Score-Änderung
+  useEffect(() => {
+    const delta = state.score - lastScoreRef.current;
+    if (delta > 0 && state.status !== 'idle') {
+      const id = ++overlayIdRef.current;
+      setScoreFloat({ delta, id });
+      setScorePulseKey((k) => k + 1);
+      window.setTimeout(() => {
+        setScoreFloat((cur) => (cur && cur.id === id ? null : cur));
+      }, 600);
+    }
+    lastScoreRef.current = state.score;
+  }, [state.score, state.status]);
 
   // Game Over: Stack-Out Timestamp + Highscore-Save + Unlock-Update
   useEffect(() => {
@@ -399,9 +450,86 @@ export default function TetrisGame() {
       return;
     }
 
+    // Spawn Linien-Fragment-Partikel bei lineflash (einmalig pro Flash)
+    if (
+      s.status === 'lineflash' &&
+      s.flashRows.length > 0 &&
+      lineFragKeyRef.current &&
+      lineFragKeyRef.current !== '__spawned'
+    ) {
+      const cellW = cssWidth / TETRIS_COLS;
+      const cellH = cssHeight / TETRIS_ROWS;
+      spawnLineFragments(
+        particlesRef.current,
+        s.board,
+        s.flashRows,
+        cellW,
+        cellH,
+        s.lastClearCount === 4,
+      );
+      lineFragKeyRef.current = '__spawned';
+    }
+    if (s.status !== 'lineflash') {
+      lineFragKeyRef.current = '';
+    }
+
+    // Level-Up-Funkenregen (kennt jetzt cssWidth)
+    if (pendingLevelUpRef.current) {
+      spawnLevelUpShower(particlesRef.current, pendingLevelUpRef.current, cssWidth);
+      pendingLevelUpRef.current = null;
+    }
+
+    // Background Ki-Partikel auffüllen (max 8)
+    if (s.status === 'playing' && bgParticlesRef.current.length < 8 && Math.random() < 0.03) {
+      bgParticlesRef.current.push({
+        x: Math.random() * cssWidth,
+        y: cssHeight + 4,
+        vx: 0,
+        vy: -(0.06 + Math.random() * 0.04), // px/ms aufwärts
+        size: 0.8 + Math.random() * 0.6,
+        color: 'rgba(220, 13, 29, 0.18)',
+        life: 8000 + Math.random() * 4000,
+        maxLife: 12000,
+        gravity: 0,
+      });
+    }
+
+    // dt
+    const dt = Math.min(50, now - lastFrameAtRef.current);
+    lastFrameAtRef.current = now;
+
+    // Update foreground particles (with gravity)
+    particlesRef.current = particlesRef.current
+      .map((p) => ({
+        ...p,
+        x: p.x + p.vx * dt,
+        y: p.y + p.vy * dt,
+        vy: p.vy + p.gravity * dt,
+        life: p.life - dt,
+      }))
+      .filter((p) => p.life > 0);
+
+    // Update background ki particles
+    bgParticlesRef.current = bgParticlesRef.current
+      .map((p) => ({
+        ...p,
+        x: p.x + p.vx * dt,
+        y: p.y + p.vy * dt,
+        life: p.life - dt,
+      }))
+      .filter((p) => p.life > 0 && p.y > -10);
+
     // Ghost ab Belt 6 unsichtbar (mehr Skill nötig)
     const showGhost = s.beltIndex < 5 && s.status === 'playing';
     const ghost = s.piece && showGhost ? ghostFor(s.board, s.piece) : null;
+
+    // Background Ki-Partikel zuerst zeichnen (kommen unter Board-Inhalt durch
+    // Reihenfolge — deshalb wir zeichnen sie nach Board nicht möglich.
+    // Lösung: kombiniere mit Vordergrund-Partikeln im Pass)
+    const allParticles: Particle[] = [
+      ...bgParticlesRef.current,
+      ...particlesRef.current,
+    ];
 
     drawBoard({
       ctx,
@@ -415,6 +543,7 @@ export default function TetrisGame() {
       contractAmount,
       stackOutAmount,
       showGhost,
+      particles: allParticles,
     });
   }, []);
 
@@ -545,11 +674,25 @@ export default function TetrisGame() {
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_180px] gap-4 items-start">
         {/* Board-Spalte */}
         <div className="flex flex-col items-center gap-3 w-full">
-          <div className="relative shrink-0" style={{ width: 'min(70vw, 320px)', aspectRatio: '10 / 20' }}>
+          <div
+            className="relative shrink-0"
+            key={`shake-${shakeKey}`}
+            style={{
+              width: 'min(70vw, 320px)',
+              aspectRatio: '10 / 20',
+              animation: shakeKey > 0 ? `rp-shake ${SHAKE_MS}ms ease-out` : undefined,
+            }}
+          >
             <canvas
               ref={boardRef}
               className="absolute inset-0 w-full h-full rounded-rp-md"
-              style={{ border: '1px solid rgba(212, 201, 181, 0.12)' }}
+              style={{
+                border: '1px solid rgba(212, 201, 181, 0.12)',
+                boxShadow: borderGlow
+                  ? `0 0 24px ${borderGlow}, inset 0 0 30px rgba(0,0,0,0.5), inset 0 0 2px rgba(212, 201, 181, 0.05)`
+                  : 'inset 0 0 30px rgba(0,0,0,0.5), inset 0 0 2px rgba(212, 201, 181, 0.05)',
+                transition: 'box-shadow 250ms ease-out',
+              }}
               aria-label="Tetris-Spielfeld"
             />
 
@@ -738,9 +881,50 @@ export default function TetrisGame() {
           <NextPiecePanel type={state.next} />
 
           <div className="border-t border-[rgba(212,201,181,0.08)] pt-3 flex flex-col gap-2">
-            <PanelStat label="Punkte" value={state.score} accent />
+            <div className="relative">
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="text-[11px] uppercase tracking-rp-display text-rp-text-muted font-medium">
+                  Punkte
+                </span>
+                <span
+                  key={`pulse-${scorePulseKey}`}
+                  className="rp-mono text-rp-rot font-bold text-2xl"
+                  style={{
+                    animation: scorePulseKey > 0 ? 'rp-score-pulse 200ms ease-out' : undefined,
+                  }}
+                >
+                  {state.score}
+                </span>
+              </div>
+              {scoreFloat && (
+                <span
+                  key={`float-${scoreFloat.id}`}
+                  className="absolute right-0 -top-2 rp-mono text-[14px] font-bold text-rp-rot pointer-events-none"
+                  style={{ animation: 'rp-score-float 600ms ease-out forwards' }}
+                >
+                  +{scoreFloat.delta}
+                </span>
+              )}
+            </div>
             <PanelStat label="Techniken" value={state.lines} />
-            <PanelStat label="Combo" value={state.combo > 1 ? `${state.combo}× (×${comboMultiplier(state.combo)})` : '—'} />
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-[11px] uppercase tracking-rp-display text-rp-text-muted font-medium">
+                Combo
+              </span>
+              {state.combo > 1 ? (
+                <span
+                  className="rp-mono text-rp-rot font-bold text-base"
+                  style={{
+                    textShadow: '0 0 10px rgba(220,13,29,0.6)',
+                    animation: 'rp-combo-pulse 800ms ease-in-out infinite',
+                  }}
+                >
+                  ×{comboMultiplier(state.combo)}
+                </span>
+              ) : (
+                <span className="rp-mono text-rp-text-muted text-sm">—</span>
+              )}
+            </div>
           </div>
 
           <div className="border-t border-[rgba(212,201,181,0.08)] pt-3">
@@ -932,6 +1116,79 @@ function StartScreen({
       </div>
     </div>
   );
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Partikel-Spawner
+// ────────────────────────────────────────────────────────────────────────────
+
+function spawnLineFragments(
+  arr: Particle[],
+  board: Array<Array<PieceType | 0>>,
+  flashRows: number[],
+  cellW: number,
+  cellH: number,
+  isQuad: boolean,
+) {
+  for (const r of flashRows) {
+    for (let c = 0; c < TETRIS_COLS; c++) {
+      const v = board[r][c];
+      if (!v) continue;
+      const baseColor = isQuad ? '#d4a017' : (PIECE_META[v as PieceType]?.color ?? '#d4c9b5');
+      // 4-6 Splitter pro Zelle
+      const splitCount = 4 + Math.floor(Math.random() * 3);
+      const cx = c * cellW + cellW / 2;
+      const cy = r * cellH + cellH / 2;
+      for (let i = 0; i < splitCount; i++) {
+        arr.push({
+          x: cx + (Math.random() - 0.5) * cellW * 0.6,
+          y: cy + (Math.random() - 0.5) * cellH * 0.6,
+          vx: (Math.random() - 0.5) * 0.18,
+          vy: -0.05 - Math.random() * 0.1,
+          size: 1.2 + Math.random() * 1.6,
+          color: baseColor,
+          life: 500 + Math.random() * 250,
+          maxLife: 700,
+          gravity: 0.0008,
+          shape: 'rect',
+        });
+      }
+    }
+  }
+  if (isQuad) {
+    // Zusätzliche goldene Partikel von oben
+    for (let i = 0; i < 24; i++) {
+      arr.push({
+        x: Math.random() * (TETRIS_COLS * cellW),
+        y: -Math.random() * 30,
+        vx: (Math.random() - 0.5) * 0.06,
+        vy: 0.18 + Math.random() * 0.12,
+        size: 1.5 + Math.random() * 1.2,
+        color: '#d4a017',
+        life: 1200 + Math.random() * 400,
+        maxLife: 1600,
+        gravity: 0.0003,
+        shape: 'dot',
+      });
+    }
+  }
+}
+
+function spawnLevelUpShower(arr: Particle[], beltHex: string, canvasWidth: number) {
+  for (let i = 0; i < 18; i++) {
+    arr.push({
+      x: Math.random() * canvasWidth,
+      y: -Math.random() * 40,
+      vx: (Math.random() - 0.5) * 0.06,
+      vy: 0.16 + Math.random() * 0.1,
+      size: 1.4 + Math.random() * 1.2,
+      color: beltHex,
+      life: 900 + Math.random() * 400,
+      maxLife: 1300,
+      gravity: 0.0004,
+      shape: 'dot',
+    });
+  }
 }
 
 function useScoreCounter(target: number, active: boolean, duration = 1500) {

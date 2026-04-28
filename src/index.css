@@ -279,3 +279,19 @@
   60% { transform: translateX(-1px); }
   80% { transform: translateX(1px); }
 }
+
+@keyframes rp-score-pulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.12); }
+  100% { transform: scale(1); }
+}
+
+@keyframes rp-score-float {
+  0% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(-22px); }
+}
+
+@keyframes rp-combo-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.06); }
+}

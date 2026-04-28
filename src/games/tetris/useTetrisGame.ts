@@ -30,6 +30,7 @@ export interface Piece {
   shape: number[][];
   x: number;
   y: number;
+  rotation: number; // 0..3
 }
 
 export interface TetrisState {
@@ -80,6 +81,7 @@ function spawn(type: PieceType): Piece {
     shape,
     x: Math.floor((COLS - w) / 2),
     y: type === 'I' ? -1 : 0,
+    rotation: 0,
   };
 }
 
@@ -276,12 +278,14 @@ function reducer(state: TetrisState, action: Action): TetrisState {
       if (state.status !== 'playing' || !state.piece) return state;
       if (state.piece.type === 'O') return state;
       const rotated = rotateMatrix(state.piece.shape);
+      const newRotation = (state.piece.rotation + 1) % 4;
       const kicks = [0, -1, 1, -2, 2];
       for (const dx of kicks) {
         const moved: Piece = {
           ...state.piece,
           shape: rotated,
           x: state.piece.x + dx,
+          rotation: newRotation,
         };
         if (!collides(state.board, moved)) return { ...state, piece: moved };
       }

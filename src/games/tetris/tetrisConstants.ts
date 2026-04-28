@@ -9,6 +9,8 @@ export const LINE_TEXT_MS = 900;   // Wie lange "OSS!"/"IPPON!" bleibt
 export const LEVELUP_MS = 1500;    // Level-Up-Banner
 export const COMBO_TEXT_MS = 1300;
 export const STACKOUT_MS = 600;    // Game-Over Stack-Out Animation
+export const SHAKE_MS = 200;       // IPPON-Shake-Dauer
+export const LEVELUP_GLOW_MS = 700;// Level-Up Border-Glow
 
 export const LINES_PER_BELT = 8;
 
@@ -21,19 +23,21 @@ export interface PieceMeta {
   technique: string;
 }
 
-// Jeder Tetromino = eine Kampfsport-Technik
+// Jeder Tetromino = eine Kampfsport-Technik mit eigener Silhouette
 export const PIECE_META: Record<PieceType, PieceMeta> = {
-  I: { color: '#dc0d1d', glow: 'rgba(220, 13, 29, 0.40)', kanji: '突', technique: 'Fauststoß' },
-  O: { color: '#d4c9b5', glow: 'rgba(212, 201, 181, 0.30)', kanji: '受', technique: 'Block' },
-  T: { color: '#aa1a1d', glow: 'rgba(170, 26, 29, 0.40)', kanji: '蹴', technique: 'Tritt' },
-  S: { color: '#2a7d47', glow: 'rgba(42, 125, 71, 0.40)', kanji: '払', technique: 'Feger' },
-  Z: { color: '#c4652a', glow: 'rgba(196, 101, 42, 0.40)', kanji: '投', technique: 'Wurf' },
-  J: { color: '#6d1723', glow: 'rgba(109, 23, 35, 0.45)', kanji: '押', technique: 'Haltegriff' },
-  L: { color: '#2454a0', glow: 'rgba(36, 84, 160, 0.45)', kanji: '関', technique: 'Hebel' },
+  I: { color: '#dc0d1d', glow: 'rgba(220, 13, 29, 0.40)', kanji: '突', technique: 'Bo-Stab' },
+  O: { color: '#d4c9b5', glow: 'rgba(212, 201, 181, 0.30)', kanji: '拳', technique: 'Faust' },
+  T: { color: '#aa1a1d', glow: 'rgba(170, 26, 29, 0.40)', kanji: '蹴', technique: 'Frontkick' },
+  S: { color: '#2a7d47', glow: 'rgba(42, 125, 71, 0.40)', kanji: '払', technique: 'Beinsweep' },
+  Z: { color: '#c4652a', glow: 'rgba(196, 101, 42, 0.40)', kanji: '投', technique: 'Hüftwurf' },
+  J: { color: '#6d1723', glow: 'rgba(109, 23, 35, 0.45)', kanji: '上', technique: 'Aufwärts-Block' },
+  L: { color: '#2454a0', glow: 'rgba(36, 84, 160, 0.45)', kanji: '下', technique: 'Abwärts-Stoß' },
 };
 
 export const PIECE_TYPES: PieceType[] = ['I', 'O', 'T', 'S', 'Z', 'J', 'L'];
 
+// SHAPES sind Spawn-Orientierung (rotation = 0). Renderer rotiert per Canvas-Transform.
+// T spawnt mit Bump nach oben (3 oben, 1 bottom-middle) — Standard SRS.
 export const PIECE_SHAPES: Record<PieceType, number[][]> = {
   I: [
     [0, 0, 0, 0],
@@ -46,8 +50,8 @@ export const PIECE_SHAPES: Record<PieceType, number[][]> = {
     [1, 1],
   ],
   T: [
-    [0, 1, 0],
     [1, 1, 1],
+    [0, 1, 0],
     [0, 0, 0],
   ],
   S: [
@@ -70,6 +74,18 @@ export const PIECE_SHAPES: Record<PieceType, number[][]> = {
     [1, 1, 1],
     [0, 0, 0],
   ],
+};
+
+// "Natürliche" (Spawn-)Bounding-Box für die Silhouetten-Rendering-Boxen.
+// Spalten × Reihen.
+export const PIECE_NATURAL_BOUNDS: Record<PieceType, { w: number; h: number }> = {
+  I: { w: 4, h: 1 },
+  O: { w: 2, h: 2 },
+  T: { w: 3, h: 2 },
+  S: { w: 3, h: 2 },
+  Z: { w: 3, h: 2 },
+  J: { w: 3, h: 2 },
+  L: { w: 3, h: 2 },
 };
 
 // 10 Level = 7 Belts + 3 Dans + Meister
@@ -95,13 +111,10 @@ export const BELT_LEVELS: BeltLevel[] = [
   { level: 10, name: 'Meister',             shortName: 'Meister',  hex: '#d4a017', glow: 'rgba(212, 160, 23, 0.55)' },
 ];
 
-// Drop-Interval (ms) pro Level. Linear bis Min 80ms.
 export function dropIntervalMs(level: number): number {
   return Math.max(80, 800 - (level - 1) * 80);
 }
 
-// Combo-Multiplier (gilt auf den Linien-Score)
-// 1 = kein Bonus, 2 = 1.5×, 3 = 2.0×, 4+ = 3.0×
 export function comboMultiplier(combo: number): number {
   if (combo >= 4) return 3.0;
   if (combo === 3) return 2.0;
@@ -109,7 +122,6 @@ export function comboMultiplier(combo: number): number {
   return 1.0;
 }
 
-// Hex (#rrggbb) um `amount` (0..1) Richtung Weiß aufhellen
 export function lightenHex(hex: string, amount: number): string {
   const m = /^#?([a-fA-F0-9]{6})$/.exec(hex.trim());
   if (!m) return hex;
