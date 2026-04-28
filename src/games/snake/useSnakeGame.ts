@@ -33,6 +33,13 @@ export const SNAKE_BELTS: SnakeBelt[] = [
   { name: 'Schwarz', hex: '#2a2a2a', glow: 'rgba(212, 201, 181, 0.30)', isBlack: true },
 ];
 
+export interface ScrollPowerUp {
+  x: number;
+  y: number;
+  spawnAt: number;
+  until: number; // expires at this performance.now() value
+}
+
 export interface SnakeState {
   snake: Cell[];
   segmentColors: string[];
@@ -51,6 +58,10 @@ export interface SnakeState {
   // Für Particles + Game-Over-Animation:
   lastEatAt: { cell: Cell; at: number } | null;
   gameOverAt: number | null;
+  // Power-Up: Burning Scroll (nur ab Schwarz-Gurt)
+  scroll: ScrollPowerUp | null;
+  scrollCooldownUntil: number;
+  scrollCutAt: { cells: Cell[]; at: number } | null;
 }
 
 type Action =
@@ -61,7 +72,8 @@ type Action =
   | { type: 'resume' }
   | { type: 'reset' }
   | { type: 'giveUp' }
-  | { type: 'setWrapAround'; wrap: boolean };
+  | { type: 'setWrapAround'; wrap: boolean }
+  | { type: 'maybeSpawnScroll' };
 
 function eq(a: Cell, b: Cell) {
   return a.x === b.x && a.y === b.y;
@@ -135,8 +147,15 @@ function init(wrapAround = false): SnakeState {
     wrapAround,
     lastEatAt: null,
     gameOverAt: null,
+    scroll: null,
+    scrollCooldownUntil: 0,
+    scrollCutAt: null,
   };
 }
+
+const SCROLL_LIFE_MS = 6000;
+const SCROLL_COOLDOWN_MS = 10000;
+const SCROLL_SPAWN_CHANCE = 0.10; // pro Check-Tick (alle 2s) → Ø ~20s
 
 function reducer(state: SnakeState, action: Action): SnakeState {
   switch (action.type) {
@@ -163,6 +182,16 @@ function reducer(state: SnakeState, action: Action): SnakeState {
     case 'tick': {
       if (state.status !== 'playing') return state;
 
+      const now = performance.now();
+
+      // Scroll-Ablauf prüfen (auch wenn nicht gegessen)
+      let scroll = state.scroll;
+      let scrollCooldownUntil = state.scrollCooldownUntil;
+      if (scroll && now >= scroll.until) {
+        scroll = null;
+        scrollCooldownUntil = now + SCROLL_COOLDOWN_MS;
+      }
+
       const direction = state.pendingDirection;
       let head = step(state.snake[0], direction);
 
@@ -173,23 +202,45 @@ function reducer(state: SnakeState, action: Action): SnakeState {
         if (state.wrapAround) {
           head = wrap(head);
         } else {
-          return { ...state, status: 'gameover', gameOverAt: performance.now() };
+          return { ...state, scroll, scrollCooldownUntil, status: 'gameover', gameOverAt: now };
         }
       }
 
       const hitsSelf = state.snake.some((s) => eq(s, head));
       const hitsObstacle = state.obstacles.some((o) => eq(o, head));
       if (hitsSelf || hitsObstacle) {
-        return { ...state, status: 'gameover', gameOverAt: performance.now() };
+        return { ...state, scroll, scrollCooldownUntil, status: 'gameover', gameOverAt: now };
+      }
+
+      // Scroll einsammeln?
+      let scrollEaten = false;
+      if (scroll && head.x === scroll.x && head.y === scroll.y) {
+        scrollEaten = true;
+        scroll = null;
+        scrollCooldownUntil = now + SCROLL_COOLDOWN_MS;
       }
 
       const ate = eq(head, state.food);
       const headColor = SNAKE_BELTS[state.beltIndex].hex;
 
-      const newSnake = ate ? [head, ...state.snake] : [head, ...state.snake.slice(0, -1)];
-      const newColors = ate
+      let newSnake = ate
+        ? [head, ...state.snake]
+        : [head, ...state.snake.slice(0, -1)];
+      let newColors = ate
         ? [headColor, ...state.segmentColors]
         : [headColor, ...state.segmentColors.slice(0, -1)];
+
+      // Bei Scroll-Eaten: 3 Schwanz-Segmente abschneiden (Min-Länge 4)
+      let scrollCutAt = state.scrollCutAt;
+      if (scrollEaten) {
+        const cut = Math.min(3, Math.max(0, newSnake.length - 4));
+        if (cut > 0) {
+          const removed = newSnake.slice(newSnake.length - cut);
+          newSnake = newSnake.slice(0, newSnake.length - cut);
+          newColors = newColors.slice(0, newSnake.length);
+          scrollCutAt = { cells: removed, at: now };
+        }
+      }
 
       if (!ate) {
         return {
@@ -197,10 +248,13 @@ function reducer(state: SnakeState, action: Action): SnakeState {
           snake: newSnake,
           segmentColors: newColors,
           direction,
+          scroll,
+          scrollCooldownUntil,
+          scrollCutAt,
         };
       }
 
-      // Ate
+      // Food gegessen
       let { beltIndex, foodsToNextBelt, level, speedMs, obstacles, obstaclesAt } = state;
       const points = 10 + beltIndex * 5;
       foodsToNextBelt -= 1;
@@ -211,10 +265,14 @@ function reducer(state: SnakeState, action: Action): SnakeState {
         level += 1;
         speedMs = Math.max(MIN_SPEED_MS, speedMs - SPEED_STEP_MS);
         obstacles = makeObstacles(level, newSnake);
-        obstaclesAt = performance.now();
+        obstaclesAt = now;
       }
 
-      const food = randomFreeCell([...newSnake, ...obstacles]);
+      const food = randomFreeCell([
+        ...newSnake,
+        ...obstacles,
+        ...(scroll ? [{ x: scroll.x, y: scroll.y } as Cell] : []),
+      ]);
 
       return {
         ...state,
@@ -229,7 +287,35 @@ function reducer(state: SnakeState, action: Action): SnakeState {
         foodsToNextBelt,
         level,
         speedMs,
-        lastEatAt: { cell: state.food, at: performance.now() },
+        lastEatAt: { cell: state.food, at: now },
+        scroll,
+        scrollCooldownUntil,
+        scrollCutAt,
+      };
+    }
+
+    case 'maybeSpawnScroll': {
+      if (state.status !== 'playing') return state;
+      // Nur ab Schwarz-Gurt (Index 6)
+      if (state.beltIndex < 6) return state;
+      if (state.scroll) return state;
+      const now = performance.now();
+      if (now < state.scrollCooldownUntil) return state;
+      if (Math.random() > SCROLL_SPAWN_CHANCE) return state;
+      const taken: Cell[] = [
+        ...state.snake,
+        ...state.obstacles,
+        state.food,
+      ];
+      const cell = randomFreeCell(taken);
+      return {
+        ...state,
+        scroll: {
+          x: cell.x,
+          y: cell.y,
+          spawnAt: now,
+          until: now + SCROLL_LIFE_MS,
+        },
       };
     }
   }
@@ -243,6 +329,13 @@ export function useSnakeGame() {
     const id = window.setInterval(() => dispatch({ type: 'tick' }), state.speedMs);
     return () => window.clearInterval(id);
   }, [state.status, state.speedMs]);
+
+  // Scroll-Spawn-Check alle 2s (Reducer entscheidet ob Spawn passt)
+  useEffect(() => {
+    if (state.status !== 'playing') return;
+    const id = window.setInterval(() => dispatch({ type: 'maybeSpawnScroll' }), 2000);
+    return () => window.clearInterval(id);
+  }, [state.status]);
 
   const start = useCallback(() => dispatch({ type: 'start' }), []);
   const reset = useCallback(() => dispatch({ type: 'reset' }), []);

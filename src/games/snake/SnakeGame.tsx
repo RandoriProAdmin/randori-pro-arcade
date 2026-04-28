@@ -10,16 +10,19 @@ import {
 import {
   createTatamiCache,
   drawBeltKnot,
+  drawBurningScroll,
+  drawDragonBody,
+  drawDragonHead,
+  drawDragonTail,
   drawMakiwara,
-  drawObiBody,
-  drawObiHead,
-  drawObiTail,
   drawSnakeParticles,
   flowDirectionForTail,
   segmentOrientation,
   spawnBeltUpShower,
   spawnCollectParticles,
   spawnDeathParticles,
+  spawnScrollEatParticles,
+  spawnTailCutParticles,
   type SnakeParticle,
 } from './snakeRenderer';
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
@@ -191,6 +194,7 @@ export default function SnakeGame() {
   const lastBeltIdxRef = useRef<number>(state.beltIndex);
   const lastTickKeyRef = useRef<number>(0);
   const wrapAnimAtRef = useRef<number>(0);
+  const lastScrollCutAtRef = useRef<number>(0);
 
   // Highscore aus localStorage laden
   useEffect(() => {
@@ -240,6 +244,18 @@ export default function SnakeGame() {
     }
     if (state.status !== 'gameover') deathSpawnedRef.current = false;
   }, [state.status, state.snake]);
+
+  // Scroll-Cut-Partikel (wenn die Schlange gerade Schwanz-Segmente verloren hat)
+  useEffect(() => {
+    if (state.scrollCutAt && state.scrollCutAt.at !== lastScrollCutAtRef.current) {
+      lastScrollCutAtRef.current = state.scrollCutAt.at;
+      // Goldene Funken am Scroll-Standort (last food cell von prev tick — wir nehmen einfach den Kopf)
+      const head = state.snake[0];
+      if (head) spawnScrollEatParticles(particlesRef.current, head.x, head.y);
+      // Schuppen-Funken an den abgetrennten Segment-Positionen
+      spawnTailCutParticles(particlesRef.current, state.scrollCutAt.cells);
+    }
+  }, [state.scrollCutAt, state.snake]);
 
   // Wrap-Spark Trigger: erkennen wenn Kopf um den Rand springt
   useEffect(() => {
@@ -381,6 +397,20 @@ export default function SnakeGame() {
       now / 400,
     );
 
+    // ── Burning Scroll (nur wenn aktiv) ──
+    if (state.scroll) {
+      const timeAlive = now - state.scroll.spawnAt;
+      drawBurningScroll(
+        ctx,
+        state.scroll.x * cell,
+        state.scroll.y * cell,
+        cell,
+        timeAlive,
+        state.scroll.until - state.scroll.spawnAt,
+        now,
+      );
+    }
+
     // ── Schlange (interpoliert, als Obi) ──
     const tFactor = Math.min(1, (now - lastTickAtRef.current) / state.speedMs);
     const interpSnake = state.snake.map((seg, i) => {
@@ -400,17 +430,13 @@ export default function SnakeGame() {
     ctx.save();
     if (fadeOut) ctx.globalAlpha = 0.3;
 
-    // Tail-Flow-Direction (für taperer Schwanz)
+    // Tail-Flow-Direction (für taperen Schwanz)
     const tailFlow = flowDirectionForTail(state.snake, state.direction);
+    const currentBelt = SNAKE_BELTS[state.beltIndex] ?? SNAKE_BELTS[0];
 
     // Vom Schwanz zum Kopf zeichnen
     for (let i = interpSnake.length - 1; i >= 0; i--) {
       const seg = interpSnake[i];
-      const baseColor = state.segmentColors[i] ?? SNAKE_BELTS[0].hex;
-      let belt = SNAKE_BELTS.find((b) => b.hex === baseColor);
-      if (blinkRed) belt = { ...(belt ?? SNAKE_BELTS[0]), hex: '#dc0d1d', isBlack: false };
-      if (!belt) belt = SNAKE_BELTS[0];
-
       const isHead = i === 0;
       const isTail = i === interpSnake.length - 1;
       const cellX = seg.x * cell;
@@ -424,24 +450,28 @@ export default function SnakeGame() {
           : 1 - Math.min(0.1, (i / interpSnake.length) * 0.1);
 
       if (isHead) {
-        drawObiHead(
-          ctx,
-          cellX + cell / 2,
-          cellY + cell / 2,
-          cell,
-          belt,
-          state.direction,
-        );
+        drawDragonHead(ctx, cellX + cell / 2, cellY + cell / 2, cell, state.direction);
       } else if (isTail) {
-        drawObiTail(ctx, cellX, cellY, cell, belt, tailFlow);
+        drawDragonTail(ctx, cellX, cellY, cell, tailFlow);
       } else {
         const orient = segmentOrientation(state.snake, i, state.direction);
-        drawObiBody(ctx, cellX, cellY, cell, {
-          belt,
+        drawDragonBody(ctx, cellX, cellY, cell, {
           orientation: orient,
-          alpha: depthAlpha,
+          segmentIndex: i,
+          totalSegments: interpSnake.length,
+          currentBelt,
+          alpha: blinkRed ? 0.6 : depthAlpha,
         });
       }
+    }
+
+    // Blink-Overlay rot bei Game-Over
+    if (blinkRed) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'source-atop';
+      ctx.fillStyle = 'rgba(220, 13, 29, 0.4)';
+      ctx.fillRect(0, 0, cssSize, cssSize);
+      ctx.restore();
     }
 
     ctx.restore();
@@ -461,7 +491,7 @@ export default function SnakeGame() {
       // Zeichnen
       drawSnakeParticles(ctx, particlesRef.current, cell);
     }
-  }, [state.obstacles, state.obstaclesAt, state.beltIndex, state.food, state.speedMs, state.snake, state.segmentColors, state.direction, state.status, state.gameOverAt, state.wrapAround, gameOverPhase]);
+  }, [state.obstacles, state.obstaclesAt, state.beltIndex, state.food, state.speedMs, state.snake, state.segmentColors, state.direction, state.status, state.gameOverAt, state.wrapAround, state.scroll, gameOverPhase]);
 
   // rAF-Loop läuft IMMER (auch idle/paused) damit Pulse + Animationen weiterleben
   useEffect(() => {
