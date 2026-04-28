@@ -7,6 +7,21 @@ import {
   type Cell,
   type Direction,
 } from './useSnakeGame';
+import {
+  createTatamiCache,
+  drawBeltKnot,
+  drawMakiwara,
+  drawObiBody,
+  drawObiHead,
+  drawObiTail,
+  drawSnakeParticles,
+  flowDirectionForTail,
+  segmentOrientation,
+  spawnBeltUpShower,
+  spawnCollectParticles,
+  spawnDeathParticles,
+  type SnakeParticle,
+} from './snakeRenderer';
 import { isSupabaseConfigured, supabase } from '../../lib/supabase';
 import { useAuth } from '../../hooks/useAuth';
 
@@ -27,16 +42,6 @@ const KEY_DIRECTIONS: Record<string, Direction> = {
   d: 'right',
   D: 'right',
 };
-
-interface Particle {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  life: number;
-  maxLife: number;
-  color: string;
-}
 
 // ────────────────────────────────────────────────────────────────────────────
 // Helper-Komponenten
@@ -153,42 +158,6 @@ function lerpCell(prev: Cell, curr: Cell, t: number): Cell {
   return { x: prev.x + dx * t, y: prev.y + dy * t };
 }
 
-function drawRoundedSquare(
-  ctx: CanvasRenderingContext2D,
-  cx: number,
-  cy: number,
-  size: number,
-  radius: number,
-) {
-  const x = cx - size / 2;
-  const y = cy - size / 2;
-  ctx.beginPath();
-  ctx.moveTo(x + radius, y);
-  ctx.arcTo(x + size, y, x + size, y + radius, radius);
-  ctx.arcTo(x + size, y + size, x + size - radius, y + size, radius);
-  ctx.arcTo(x, y + size, x, y + size - radius, radius);
-  ctx.arcTo(x, y, x + radius, y, radius);
-  ctx.closePath();
-}
-
-function drawRoundedRect(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  r: number,
-) {
-  const rr = Math.min(r, w / 2, h / 2);
-  ctx.beginPath();
-  ctx.moveTo(x + rr, y);
-  ctx.arcTo(x + w, y, x + w, y + rr, rr);
-  ctx.arcTo(x + w, y + h, x + w - rr, y + h, rr);
-  ctx.arcTo(x, y + h, x, y + h - rr, rr);
-  ctx.arcTo(x, y, x + rr, y, rr);
-  ctx.closePath();
-}
-
 // ────────────────────────────────────────────────────────────────────────────
 // SnakeGame
 // ────────────────────────────────────────────────────────────────────────────
@@ -207,9 +176,21 @@ export default function SnakeGame() {
   // Refs für Interpolation + Effekte
   const prevSnakeRef = useRef<Cell[]>(state.snake);
   const lastTickAtRef = useRef<number>(performance.now());
-  const particlesRef = useRef<Particle[]>([]);
+  const particlesRef = useRef<SnakeParticle[]>([]);
   const lastFrameAtRef = useRef<number>(performance.now());
   const lastFoodAteRef = useRef<number>(0);
+  // Tatami-Cache (regeneriert sich bei Größen-Änderung)
+  const tatamiRef = useRef<{
+    canvas: HTMLCanvasElement;
+    w: number;
+    h: number;
+    wrap: boolean;
+  } | null>(null);
+  // Trigger für einmalige Effekte
+  const deathSpawnedRef = useRef(false);
+  const lastBeltIdxRef = useRef<number>(state.beltIndex);
+  const lastTickKeyRef = useRef<number>(0);
+  const wrapAnimAtRef = useRef<number>(0);
 
   // Highscore aus localStorage laden
   useEffect(() => {
@@ -232,24 +213,64 @@ export default function SnakeGame() {
     if (state.lastEatAt && state.lastEatAt.at !== lastFoodAteRef.current) {
       lastFoodAteRef.current = state.lastEatAt.at;
       const c = state.lastEatAt.cell;
-      const color = SNAKE_BELTS[Math.min(state.beltIndex, SNAKE_BELTS.length - 1)].hex;
-      const count = 5;
-      for (let i = 0; i < count; i++) {
-        const angle = (i / count) * Math.PI * 2 + Math.random() * 0.4;
-        // Zellen pro ms — 1-2 Zellen Reichweite über Lebenszeit
-        const speed = 0.0025 + Math.random() * 0.003;
-        particlesRef.current.push({
-          x: c.x + 0.5,
-          y: c.y + 0.5,
-          vx: Math.cos(angle) * speed,
-          vy: Math.sin(angle) * speed,
-          life: 400,
-          maxLife: 400,
-          color,
-        });
-      }
+      const color =
+        SNAKE_BELTS[Math.min(state.beltIndex, SNAKE_BELTS.length - 1)].hex;
+      spawnCollectParticles(particlesRef.current, c.x, c.y, color);
     }
   }, [state.lastEatAt, state.beltIndex]);
+
+  // Belt-Up Funkenregen
+  useEffect(() => {
+    if (
+      state.beltIndex > lastBeltIdxRef.current &&
+      state.status !== 'idle' &&
+      state.status !== 'gameover'
+    ) {
+      const color = SNAKE_BELTS[state.beltIndex]?.hex ?? '#ffffff';
+      spawnBeltUpShower(particlesRef.current, color);
+    }
+    lastBeltIdxRef.current = state.beltIndex;
+  }, [state.beltIndex, state.status]);
+
+  // Death-Partikel (einmalig pro Game-Over)
+  useEffect(() => {
+    if (state.status === 'gameover' && !deathSpawnedRef.current) {
+      deathSpawnedRef.current = true;
+      spawnDeathParticles(particlesRef.current, state.snake);
+    }
+    if (state.status !== 'gameover') deathSpawnedRef.current = false;
+  }, [state.status, state.snake]);
+
+  // Wrap-Spark Trigger: erkennen wenn Kopf um den Rand springt
+  useEffect(() => {
+    const tickKey = state.lastEatAt?.at ?? lastTickKeyRef.current;
+    lastTickKeyRef.current = tickKey;
+    if (!state.wrapAround || state.snake.length < 2) return;
+    const head = state.snake[0];
+    const prevHead = prevSnakeRef.current[0];
+    if (!prevHead) return;
+    const dx = Math.abs(head.x - prevHead.x);
+    const dy = Math.abs(head.y - prevHead.y);
+    if (dx > GRID_SIZE / 2 || dy > GRID_SIZE / 2) {
+      // Wrap erkannt — Funken am NEUEN Kopf
+      const color = SNAKE_BELTS[state.beltIndex]?.hex ?? '#d4c9b5';
+      for (let i = 0; i < 4; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        particlesRef.current.push({
+          x: head.x + 0.5,
+          y: head.y + 0.5,
+          vx: Math.cos(angle) * 0.002,
+          vy: Math.sin(angle) * 0.002,
+          life: 220,
+          maxLife: 220,
+          color,
+          size: 1.6 + Math.random() * 1,
+          gravity: 0,
+        });
+      }
+      wrapAnimAtRef.current = performance.now();
+    }
+  }, [state.snake, state.wrapAround, state.beltIndex, state.lastEatAt]);
 
   // Game Over Phasen
   useEffect(() => {
@@ -310,7 +331,7 @@ export default function SnakeGame() {
 
     const dpr = window.devicePixelRatio || 1;
     const cssSize = canvas.clientWidth;
-    if (cssSize === 0) return;
+    if (cssSize <= 0) return;
     const px = Math.floor(cssSize * dpr);
     if (canvas.width !== px) {
       canvas.width = px;
@@ -319,63 +340,25 @@ export default function SnakeGame() {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     const cell = cssSize / GRID_SIZE;
-    const dt = now - lastFrameAtRef.current;
+    if (cell <= 0) return;
+    const dt = Math.min(50, now - lastFrameAtRef.current);
     lastFrameAtRef.current = now;
 
-    // ── Hintergrund: Vignette + Enso-Kreis ──
-    ctx.fillStyle = '#0f0f0f';
-    ctx.fillRect(0, 0, cssSize, cssSize);
-
-    // Enso-Kreis (offen)
-    const enRadius = cssSize * 0.4;
-    const cxC = cssSize / 2;
-    const cyC = cssSize / 2;
-    ctx.strokeStyle = 'rgba(220, 13, 29, 0.04)';
-    ctx.lineWidth = Math.max(2, cssSize / 100);
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.arc(cxC, cyC, enRadius, Math.PI * 0.15, Math.PI * 1.85, false);
-    ctx.stroke();
-
-    // Vignette (radial gradient overlay)
-    const vg = ctx.createRadialGradient(
-      cxC,
-      cyC,
-      cssSize * 0.2,
-      cxC,
-      cyC,
-      cssSize * 0.75,
-    );
-    vg.addColorStop(0, 'rgba(0,0,0,0)');
-    vg.addColorStop(1, 'rgba(0,0,0,0.55)');
-    ctx.fillStyle = vg;
-    ctx.fillRect(0, 0, cssSize, cssSize);
-
-    // ── Wrap-Hint: Pfeile am Rand wenn aktiv ──
-    if (state.wrapAround) {
-      ctx.fillStyle = 'rgba(212, 201, 181, 0.15)';
-      const arrowSize = cell * 0.4;
-      // 4 dreiecke je Seite (Mitte)
-      const drawArrow = (
-        x: number,
-        y: number,
-        rotation: number,
-      ) => {
-        ctx.save();
-        ctx.translate(x, y);
-        ctx.rotate(rotation);
-        ctx.beginPath();
-        ctx.moveTo(arrowSize / 2, 0);
-        ctx.lineTo(-arrowSize / 2, -arrowSize / 2);
-        ctx.lineTo(-arrowSize / 2, arrowSize / 2);
-        ctx.closePath();
-        ctx.fill();
-        ctx.restore();
+    // ── Tatami-Hintergrund (cached) ──
+    const tat = tatamiRef.current;
+    if (!tat || tat.w !== cssSize || tat.h !== cssSize || tat.wrap !== state.wrapAround) {
+      tatamiRef.current = {
+        canvas: createTatamiCache(cssSize, cssSize, cell, state.wrapAround),
+        w: cssSize,
+        h: cssSize,
+        wrap: state.wrapAround,
       };
-      drawArrow(cssSize - 6, cssSize / 2, 0); // → rechts
-      drawArrow(6, cssSize / 2, Math.PI); // ← links
-      drawArrow(cssSize / 2, 6, -Math.PI / 2); // ↑ oben
-      drawArrow(cssSize / 2, cssSize - 6, Math.PI / 2); // ↓ unten
+    }
+    if (tatamiRef.current) {
+      ctx.drawImage(tatamiRef.current.canvas, 0, 0);
+    } else {
+      ctx.fillStyle = '#0f0f0f';
+      ctx.fillRect(0, 0, cssSize, cssSize);
     }
 
     // ── Hindernisse (Makiwara) mit Fade-In ──
@@ -383,79 +366,27 @@ export default function SnakeGame() {
       ? Math.min(1, (now - state.obstaclesAt) / 300)
       : 1;
     state.obstacles.forEach((o) => {
-      const x = o.x * cell;
-      const y = o.y * cell;
-      ctx.save();
-      ctx.globalAlpha = obsAge;
-
-      // Schatten
-      ctx.fillStyle = 'rgba(0,0,0,0.3)';
-      drawRoundedRect(ctx, x + 4, y + cell - 4, cell - 4, 4, 2);
-      ctx.fill();
-
-      // Holzkörper
-      ctx.fillStyle = '#3a2a1a';
-      drawRoundedRect(ctx, x + cell * 0.2, y + 2, cell * 0.6, cell - 4, 3);
-      ctx.fill();
-
-      // Holzmaserung
-      ctx.strokeStyle = 'rgba(0,0,0,0.25)';
-      ctx.lineWidth = 1;
-      for (let i = 0; i < 3; i++) {
-        ctx.beginPath();
-        ctx.moveTo(x + cell * 0.25, y + cell * (0.3 + i * 0.18));
-        ctx.lineTo(x + cell * 0.75, y + cell * (0.3 + i * 0.18));
-        ctx.stroke();
-      }
-
-      // Schlagpolster oben
-      ctx.fillStyle = '#6d1723';
-      drawRoundedRect(ctx, x + cell * 0.2, y + 2, cell * 0.6, cell * 0.18, 2);
-      ctx.fill();
-
-      ctx.restore();
+      drawMakiwara(ctx, o.x * cell, o.y * cell, cell, obsAge);
     });
 
-    // ── Food (Gürtelknoten) ──
-    const nextBelt = SNAKE_BELTS[Math.min(state.beltIndex + 1, SNAKE_BELTS.length - 1)];
-    const fx = state.food.x * cell + cell / 2;
-    const fy = state.food.y * cell + cell / 2;
-    // Pulse 1.5s ease-in-out
-    const pulse = 0.7 + 0.3 * (0.5 + 0.5 * Math.sin(now / 700));
-    ctx.save();
-    ctx.globalAlpha = pulse;
-    // Glow
-    ctx.shadowBlur = cell * 0.6;
-    ctx.shadowColor = nextBelt.glow;
-    // horizontaler Strich
-    ctx.fillStyle = nextBelt.hex;
-    drawRoundedRect(
+    // ── Food (Belt-Knot) in nächster Belt-Farbe ──
+    const nextBelt =
+      SNAKE_BELTS[Math.min(state.beltIndex + 1, SNAKE_BELTS.length - 1)];
+    drawBeltKnot(
       ctx,
-      fx - cell * 0.4,
-      fy - cell * 0.08,
-      cell * 0.8,
-      cell * 0.16,
-      cell * 0.06,
+      state.food.x * cell,
+      state.food.y * cell,
+      cell,
+      nextBelt,
+      now / 400,
     );
-    ctx.fill();
-    // Schlaufe
-    ctx.shadowBlur = 0;
-    ctx.beginPath();
-    ctx.arc(fx, fy, cell * 0.18, 0, Math.PI * 2);
-    ctx.fillStyle = nextBelt.hex;
-    ctx.fill();
-    ctx.fillStyle = '#0f0f0f';
-    ctx.beginPath();
-    ctx.arc(fx, fy, cell * 0.08, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
 
-    // ── Schlange (interpoliert, als Gürtelband) ──
-    const t = Math.min(1, (now - lastTickAtRef.current) / state.speedMs);
+    // ── Schlange (interpoliert, als Obi) ──
+    const tFactor = Math.min(1, (now - lastTickAtRef.current) / state.speedMs);
     const interpSnake = state.snake.map((seg, i) => {
       const prev = prevSnakeRef.current[i];
       if (!prev) return seg;
-      return lerpCell(prev, seg, t);
+      return lerpCell(prev, seg, tFactor);
     });
 
     // Game-Over Blink: alle 100ms wechseln (3 Blinks = 600ms gesamt)
@@ -469,123 +400,80 @@ export default function SnakeGame() {
     ctx.save();
     if (fadeOut) ctx.globalAlpha = 0.3;
 
-    // Vom Schwanz zum Kopf zeichnen, damit Kopf oben liegt
+    // Tail-Flow-Direction (für taperer Schwanz)
+    const tailFlow = flowDirectionForTail(state.snake, state.direction);
+
+    // Vom Schwanz zum Kopf zeichnen
     for (let i = interpSnake.length - 1; i >= 0; i--) {
       const seg = interpSnake[i];
       const baseColor = state.segmentColors[i] ?? SNAKE_BELTS[0].hex;
-      const beltDef = SNAKE_BELTS.find((b) => b.hex === baseColor);
-      const isBlack = beltDef?.isBlack;
-      const color = blinkRed ? '#dc0d1d' : baseColor;
+      let belt = SNAKE_BELTS.find((b) => b.hex === baseColor);
+      if (blinkRed) belt = { ...(belt ?? SNAKE_BELTS[0]), hex: '#dc0d1d', isBlack: false };
+      if (!belt) belt = SNAKE_BELTS[0];
+
       const isHead = i === 0;
       const isTail = i === interpSnake.length - 1;
+      const cellX = seg.x * cell;
+      const cellY = seg.y * cell;
 
-      const sizeMul = isHead ? 1.05 : isTail ? 0.85 : 1.0;
-      const size = cell * sizeMul;
-      const radius = isHead
-        ? size * 0.45
+      // Tiefen-Alpha: Schwanz leicht transparenter
+      const depthAlpha = isHead
+        ? 1
         : isTail
-          ? size * 0.5
-          : size * 0.36;
-      const cx = seg.x * cell + cell / 2;
-      const cy = seg.y * cell + cell / 2;
+          ? 0.85
+          : 1 - Math.min(0.1, (i / interpSnake.length) * 0.1);
 
-      // Glow
-      if (!fadeOut) {
-        ctx.shadowBlur = isHead ? 12 : 4;
-        ctx.shadowColor = blinkRed
-          ? 'rgba(220, 13, 29, 0.5)'
-          : isBlack
-            ? 'rgba(212, 201, 181, 0.35)'
-            : (beltDef?.glow ?? 'rgba(255,255,255,0.2)');
-      }
-      ctx.fillStyle = color;
-      drawRoundedSquare(ctx, cx, cy, size, radius);
-      ctx.fill();
-
-      // Beige Stickerei beim Schwarz-Gurt
-      if (isBlack && !blinkRed) {
-        ctx.shadowBlur = 0;
-        ctx.lineWidth = 1;
-        ctx.strokeStyle = '#d4c9b5';
-        ctx.stroke();
-      }
-
-      ctx.shadowBlur = 0;
-    }
-
-    // Augen am Kopf für Charakter
-    if (interpSnake.length > 0 && !blinkRed && !fadeOut) {
-      const head = interpSnake[0];
-      const cx = head.x * cell + cell / 2;
-      const cy = head.y * cell + cell / 2;
-      const dir = state.direction;
-      const off = cell * 0.18;
-      const eyeR = cell * 0.06;
-      let e1x = cx,
-        e1y = cy,
-        e2x = cx,
-        e2y = cy;
-      if (dir === 'left') {
-        e1x = cx - off;
-        e1y = cy - off;
-        e2x = cx - off;
-        e2y = cy + off;
-      } else if (dir === 'right') {
-        e1x = cx + off;
-        e1y = cy - off;
-        e2x = cx + off;
-        e2y = cy + off;
-      } else if (dir === 'up') {
-        e1x = cx - off;
-        e1y = cy - off;
-        e2x = cx + off;
-        e2y = cy - off;
+      if (isHead) {
+        drawObiHead(
+          ctx,
+          cellX + cell / 2,
+          cellY + cell / 2,
+          cell,
+          belt,
+          state.direction,
+        );
+      } else if (isTail) {
+        drawObiTail(ctx, cellX, cellY, cell, belt, tailFlow);
       } else {
-        e1x = cx - off;
-        e1y = cy + off;
-        e2x = cx + off;
-        e2y = cy + off;
+        const orient = segmentOrientation(state.snake, i, state.direction);
+        drawObiBody(ctx, cellX, cellY, cell, {
+          belt,
+          orientation: orient,
+          alpha: depthAlpha,
+        });
       }
-      ctx.fillStyle = '#0f0f0f';
-      ctx.beginPath();
-      ctx.arc(e1x, e1y, eyeR, 0, Math.PI * 2);
-      ctx.arc(e2x, e2y, eyeR, 0, Math.PI * 2);
-      ctx.fill();
     }
 
     ctx.restore();
 
-    // ── Particles ──
+    // ── Particles aktualisieren + zeichnen ──
     if (particlesRef.current.length > 0) {
-      const remaining: Particle[] = [];
-      for (const p of particlesRef.current) {
-        const newLife = p.life - dt;
-        if (newLife <= 0) continue;
-        const newP: Particle = {
+      // Update
+      particlesRef.current = particlesRef.current
+        .map((p) => ({
           ...p,
           x: p.x + p.vx * dt,
           y: p.y + p.vy * dt,
-          life: newLife,
-        };
-        const a = newLife / p.maxLife;
-        ctx.save();
-        ctx.globalAlpha = a;
-        ctx.fillStyle = p.color;
-        ctx.beginPath();
-        ctx.arc(newP.x * cell, newP.y * cell, cell * 0.08, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-        remaining.push(newP);
-      }
-      particlesRef.current = remaining;
+          vy: p.vy + p.gravity * dt,
+          life: p.life - dt,
+        }))
+        .filter((p) => p.life > 0);
+      // Zeichnen
+      drawSnakeParticles(ctx, particlesRef.current, cell);
     }
   }, [state.obstacles, state.obstaclesAt, state.beltIndex, state.food, state.speedMs, state.snake, state.segmentColors, state.direction, state.status, state.gameOverAt, state.wrapAround, gameOverPhase]);
 
   // rAF-Loop läuft IMMER (auch idle/paused) damit Pulse + Animationen weiterleben
   useEffect(() => {
     let raf = 0;
+    let errorCount = 0;
     const loop = (now: number) => {
-      draw(now);
+      try {
+        draw(now);
+      } catch (err) {
+        errorCount++;
+        if (errorCount <= 3) console.error('[Snake] render error:', err);
+      }
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
