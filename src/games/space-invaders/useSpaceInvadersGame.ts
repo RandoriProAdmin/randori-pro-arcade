@@ -214,6 +214,7 @@ type Action =
   | { type: 'tick'; dt: number; now: number }
   | { type: 'inputLeft'; active: boolean }
   | { type: 'inputRight'; active: boolean }
+  | { type: 'setPlayerX'; x: number }
   | { type: 'fire' }
   | { type: 'switchWeapon'; index: number }
   | { type: 'pause' }
@@ -562,6 +563,12 @@ function reducer(state: State, action: Action): State {
       return { ...state, input: { ...state.input, left: action.active } };
     case 'inputRight':
       return { ...state, input: { ...state.input, right: action.active } };
+
+    case 'setPlayerX': {
+      if (state.status !== 'playing') return state;
+      const x = Math.max(20, Math.min(LOGICAL_WIDTH - 20, action.x));
+      return { ...state, player: { ...state.player, x } };
+    }
 
     case 'switchWeapon': {
       if (state.status !== 'playing') return state;
@@ -1275,6 +1282,10 @@ export function useSpaceInvadersGame() {
     (active: boolean) => dispatch({ type: 'inputRight', active }),
     [],
   );
+  const setPlayerX = useCallback(
+    (x: number) => dispatch({ type: 'setPlayerX', x }),
+    [],
+  );
   const switchWeapon = useCallback(
     (index: number) => dispatch({ type: 'switchWeapon', index }),
     [],
@@ -1294,6 +1305,7 @@ export function useSpaceInvadersGame() {
     fire,
     inputLeft,
     inputRight,
+    setPlayerX,
     switchWeapon,
   };
 }

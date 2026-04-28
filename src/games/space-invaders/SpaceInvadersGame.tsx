@@ -149,63 +149,6 @@ function BeltProgressBar({
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Touch-Buttons
-// ────────────────────────────────────────────────────────────────────────────
-
-function HoldButton({
-  onPress,
-  onRelease,
-  children,
-  className = '',
-  primary = false,
-  ariaLabel,
-}: {
-  onPress: () => void;
-  onRelease: () => void;
-  children: React.ReactNode;
-  className?: string;
-  primary?: boolean;
-  ariaLabel: string;
-}) {
-  const handlers = {
-    onTouchStart: (e: React.TouchEvent) => {
-      e.preventDefault();
-      onPress();
-    },
-    onTouchEnd: (e: React.TouchEvent) => {
-      e.preventDefault();
-      onRelease();
-    },
-    onTouchCancel: () => onRelease(),
-    onMouseDown: (e: React.MouseEvent) => {
-      e.preventDefault();
-      onPress();
-    },
-    onMouseUp: () => onRelease(),
-    onMouseLeave: () => onRelease(),
-    onContextMenu: (e: React.MouseEvent) => e.preventDefault(),
-  };
-  return (
-    <button
-      {...handlers}
-      aria-label={ariaLabel}
-      className={`flex items-center justify-center font-semibold transition-all duration-rp active:bg-[rgba(220,13,29,0.2)] select-none ${className}`}
-      style={{
-        height: 56,
-        borderRadius: 10,
-        background: primary ? 'rgba(220, 13, 29, 0.15)' : 'rgba(30, 30, 30, 0.8)',
-        border: primary
-          ? '1px solid rgba(220, 13, 29, 0.4)'
-          : '1px solid rgba(212, 201, 181, 0.12)',
-        color: primary ? '#fff' : '#a0a0a0',
-      }}
-    >
-      {children}
-    </button>
-  );
-}
-
-// ────────────────────────────────────────────────────────────────────────────
 // Main
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -223,6 +166,7 @@ export default function SpaceInvadersGame() {
     fire,
     inputLeft,
     inputRight,
+    setPlayerX,
     switchWeapon,
   } = useSpaceInvadersGame();
   const [bestScore, setBestScore] = useState(0);
@@ -342,6 +286,100 @@ export default function SpaceInvadersGame() {
       window.removeEventListener('keyup', onKeyUp);
     };
   }, [state.status, start, pause, resume, fire, inputLeft, inputRight, switchWeapon]);
+
+  // Touch — Finger-Drag steuert Spieler-X, Auto-Feuer solange berührt, Doppel-Tap = Waffe wechseln
+  const autoFireRef = useRef<number | null>(null);
+  const lastTapRef = useRef<{ t: number; x: number; y: number } | null>(null);
+  const touchDragRef = useRef<{ moved: boolean; startX: number; startY: number; startT: number } | null>(null);
+
+  function clientToLogicalX(clientX: number): number {
+    const canvas = canvasRef.current;
+    if (!canvas) return LOGICAL_WIDTH / 2;
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width <= 0) return LOGICAL_WIDTH / 2;
+    return ((clientX - rect.left) / rect.width) * LOGICAL_WIDTH;
+  }
+
+  function startAutoFire() {
+    if (autoFireRef.current !== null) return;
+    fire();
+    autoFireRef.current = window.setInterval(() => fire(), 60);
+  }
+  function stopAutoFire() {
+    if (autoFireRef.current !== null) {
+      window.clearInterval(autoFireRef.current);
+      autoFireRef.current = null;
+    }
+  }
+  useEffect(() => {
+    return () => stopAutoFire();
+  }, []);
+  useEffect(() => {
+    if (state.status !== 'playing') stopAutoFire();
+  }, [state.status]);
+
+  function onCanvasTouchStart(e: React.TouchEvent) {
+    e.preventDefault();
+    const t = e.touches[0];
+    const now = performance.now();
+    touchDragRef.current = {
+      moved: false,
+      startX: t.clientX,
+      startY: t.clientY,
+      startT: now,
+    };
+
+    if (state.status === 'idle') return;
+    if (state.status === 'paused') return;
+    if (state.status !== 'playing') return;
+
+    setPlayerX(clientToLogicalX(t.clientX));
+    startAutoFire();
+  }
+  function onCanvasTouchMove(e: React.TouchEvent) {
+    e.preventDefault();
+    const t = e.touches[0];
+    const drag = touchDragRef.current;
+    if (drag) {
+      const dx = t.clientX - drag.startX;
+      const dy = t.clientY - drag.startY;
+      if (Math.hypot(dx, dy) > 10) drag.moved = true;
+    }
+    if (state.status === 'playing') {
+      setPlayerX(clientToLogicalX(t.clientX));
+    }
+  }
+  function onCanvasTouchEnd(e: React.TouchEvent) {
+    e.preventDefault();
+    stopAutoFire();
+    const drag = touchDragRef.current;
+    touchDragRef.current = null;
+    if (!drag) return;
+    const t = e.changedTouches[0];
+    const now = performance.now();
+    const dt = now - drag.startT;
+    const wasTap = !drag.moved && dt < 280;
+
+    if (state.status === 'idle') {
+      if (wasTap) start();
+      return;
+    }
+    if (state.status === 'paused') {
+      if (wasTap) resume();
+      return;
+    }
+
+    if (wasTap && state.status === 'playing') {
+      const last = lastTapRef.current;
+      if (last && now - last.t < 320 && Math.hypot(t.clientX - last.x, t.clientY - last.y) < 40) {
+        const next = (state.activeWeapon + 1) % Math.max(1, state.unlockedWeapons);
+        if (next !== state.activeWeapon) switchWeapon(next);
+        lastTapRef.current = null;
+      } else {
+        lastTapRef.current = { t: now, x: t.clientX, y: t.clientY };
+      }
+    }
+  }
 
   // Game Over: Highscore speichern
   useEffect(() => {
@@ -496,10 +534,40 @@ export default function SpaceInvadersGame() {
       >
         <canvas
           ref={canvasRef}
+          onTouchStart={onCanvasTouchStart}
+          onTouchMove={onCanvasTouchMove}
+          onTouchEnd={onCanvasTouchEnd}
+          onTouchCancel={onCanvasTouchEnd}
           className="absolute inset-0 w-full h-full rounded-rp-md"
-          style={{ border: '1px solid rgba(212, 201, 181, 0.08)' }}
+          style={{
+            border: '1px solid rgba(212, 201, 181, 0.08)',
+            touchAction: 'none',
+          }}
           aria-label="Dojo-Defenders-Spielfeld"
         />
+
+        {/* Pause-Button (nur Mobile, oben rechts) */}
+        {state.status === 'playing' && (
+          <button
+            type="button"
+            onClick={pause}
+            onContextMenu={(e) => e.preventDefault()}
+            aria-label="Pause"
+            className="absolute top-2 right-2 sm:hidden flex items-center justify-center select-none"
+            style={{
+              width: 36,
+              height: 36,
+              borderRadius: 8,
+              background: 'rgba(0,0,0,0.6)',
+              border: '1px solid rgba(212, 201, 181, 0.2)',
+              color: '#d4c9b5',
+              fontSize: 14,
+              backdropFilter: 'blur(4px)',
+            }}
+          >
+            ❚❚
+          </button>
+        )}
 
         {/* Wave/Boss Announce */}
         {showAnnounce && state.announce && (
@@ -684,32 +752,6 @@ export default function SpaceInvadersGame() {
         )}
       </div>
 
-      {/* Mobile Touch Buttons */}
-      <div className="grid grid-cols-[1fr_2fr_1fr] gap-2 sm:hidden">
-        <HoldButton
-          ariaLabel="Links"
-          onPress={() => inputLeft(true)}
-          onRelease={() => inputLeft(false)}
-        >
-          ←
-        </HoldButton>
-        <HoldButton
-          ariaLabel="Feuer"
-          onPress={fire}
-          onRelease={() => {}}
-          primary
-        >
-          🔥 Feuer
-        </HoldButton>
-        <HoldButton
-          ariaLabel="Rechts"
-          onPress={() => inputRight(true)}
-          onRelease={() => inputRight(false)}
-        >
-          →
-        </HoldButton>
-      </div>
-
       {/* Waffen-Slots */}
       <div className="flex items-center justify-center gap-2 mt-1">
         {KI_TECHNIQUES.map((tech, i) => {
@@ -766,6 +808,9 @@ export default function SpaceInvadersGame() {
 
       <p className="hidden sm:block text-xs text-rp-text-muted rp-mono text-center">
         ← → bewegen · Leertaste = Feuer · 1/2/3 Waffe · Esc/P pausiert
+      </p>
+      <p className="sm:hidden text-[11px] text-rp-text-muted rp-mono text-center leading-relaxed">
+        Finger schieben bewegt + feuert · Doppel-Tipp wechselt Waffe
       </p>
 
       {!isSupabaseConfigured && (

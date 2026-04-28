@@ -175,39 +175,6 @@ function TechniqueLegend() {
   );
 }
 
-function TouchButton({
-  onClick,
-  label,
-  children,
-  primary = false,
-}: {
-  onClick: () => void;
-  label: string;
-  children: React.ReactNode;
-  primary?: boolean;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      onContextMenu={(e) => e.preventDefault()}
-      className="flex items-center justify-center text-rp-text-secondary transition-all duration-rp active:scale-95 active:text-white select-none"
-      style={{
-        height: 48,
-        borderRadius: 10,
-        background: primary
-          ? 'rgba(220, 13, 29, 0.15)'
-          : 'rgba(30, 30, 30, 0.8)',
-        border: primary
-          ? '1px solid rgba(220, 13, 29, 0.4)'
-          : '1px solid rgba(212, 201, 181, 0.12)',
-      }}
-      aria-label={label}
-    >
-      {children}
-    </button>
-  );
-}
-
 // ────────────────────────────────────────────────────────────────────────────
 // TetrisGame
 // ────────────────────────────────────────────────────────────────────────────
@@ -627,6 +594,54 @@ export default function TetrisGame() {
     return () => window.removeEventListener('keydown', onKey);
   }, [state.status, state.startBeltIndex, left, right, softDrop, rotate, hardDrop, start, pause, resume]);
 
+  // Touch — Swipe steuert, Tap rotiert
+  const touchStartRef = useRef<{ x: number; y: number; t: number } | null>(null);
+  function onCanvasTouchStart(e: React.TouchEvent) {
+    const t = e.touches[0];
+    touchStartRef.current = { x: t.clientX, y: t.clientY, t: performance.now() };
+  }
+  function onCanvasTouchEnd(e: React.TouchEvent) {
+    const ts = touchStartRef.current;
+    if (!ts) return;
+    touchStartRef.current = null;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - ts.x;
+    const dy = t.clientY - ts.y;
+    const dt = performance.now() - ts.t;
+    const dist = Math.hypot(dx, dy);
+    const isTap = dist < 14 && dt < 280;
+
+    if (state.status === 'idle') {
+      if (isTap) start(state.startBeltIndex);
+      return;
+    }
+    if (state.status === 'paused') {
+      if (isTap) resume();
+      return;
+    }
+    if (state.status !== 'playing' && state.status !== 'lineflash') return;
+
+    if (isTap) {
+      rotate();
+      return;
+    }
+    // Vertikal dominant
+    if (Math.abs(dy) > Math.abs(dx)) {
+      if (dy < -40) hardDrop();
+      else if (dy > 140) hardDrop();
+      else if (dy > 30) softDrop();
+      return;
+    }
+    // Horizontal: multi-cell move basierend auf Distanz
+    const wrap = boardRef.current?.parentElement;
+    const cellPx = wrap ? wrap.clientWidth / TETRIS_COLS : 30;
+    const cells = Math.max(1, Math.round(Math.abs(dx) / cellPx));
+    for (let i = 0; i < cells; i++) {
+      if (dx > 0) right();
+      else left();
+    }
+  }
+
   const beltDef = BELT_LEVELS[state.beltIndex];
   const startBelt = BELT_LEVELS[state.startBeltIndex];
   const lineTextCfg = useMemo(
@@ -683,6 +698,8 @@ export default function TetrisGame() {
           >
             <canvas
               ref={boardRef}
+              onTouchStart={onCanvasTouchStart}
+              onTouchEnd={onCanvasTouchEnd}
               className="absolute inset-0 w-full h-full rounded-rp-md"
               style={{
                 border: '1px solid rgba(212, 201, 181, 0.12)',
@@ -690,6 +707,7 @@ export default function TetrisGame() {
                   ? `0 0 24px ${borderGlow}, inset 0 0 30px rgba(0,0,0,0.5), inset 0 0 2px rgba(212, 201, 181, 0.05)`
                   : 'inset 0 0 30px rgba(0,0,0,0.5), inset 0 0 2px rgba(212, 201, 181, 0.05)',
                 transition: 'box-shadow 250ms ease-out',
+                touchAction: 'none',
               }}
               aria-label="Tetris-Spielfeld"
             />
@@ -975,14 +993,9 @@ export default function TetrisGame() {
         </aside>
       </div>
 
-      {/* Mobile Touch Buttons */}
-      <div className="grid grid-cols-5 gap-2 lg:hidden">
-        <TouchButton onClick={left} label="Links">←</TouchButton>
-        <TouchButton onClick={rotate} label="Rotieren">↻</TouchButton>
-        <TouchButton onClick={right} label="Rechts">→</TouchButton>
-        <TouchButton onClick={softDrop} label="Soft Drop">↓</TouchButton>
-        <TouchButton onClick={hardDrop} label="Hard Drop" primary>⤓</TouchButton>
-      </div>
+      <p className="lg:hidden text-[11px] text-rp-text-muted rp-mono text-center leading-relaxed">
+        ←→ Wischen bewegt · Tippen rotiert · ↓ Soft Drop · ↑ Hard Drop
+      </p>
 
       {!isSupabaseConfigured && (
         <p className="text-xs text-rp-text-muted text-center">

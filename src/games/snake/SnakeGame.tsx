@@ -84,34 +84,6 @@ function Switch({
   );
 }
 
-function TouchKey({
-  children,
-  onClick,
-  label,
-}: {
-  children: React.ReactNode;
-  onClick: () => void;
-  label: string;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      onContextMenu={(e) => e.preventDefault()}
-      className="flex items-center justify-center text-xl font-bold text-white transition-all duration-rp active:scale-95 select-none"
-      style={{
-        width: 56,
-        height: 56,
-        borderRadius: 12,
-        background: 'rgba(220, 13, 29, 0.12)',
-        border: '1px solid rgba(220, 13, 29, 0.2)',
-      }}
-      aria-label={label}
-    >
-      {children}
-    </button>
-  );
-}
-
 function BeltProgressBar({
   beltIndex,
   foodsToNextBelt,
@@ -527,18 +499,29 @@ export default function SnakeGame() {
     return () => window.removeEventListener('keydown', onKey);
   }, [state.status, turn, pause, resume, start]);
 
-  // Touch
+  // Touch — Swipe steuert, Tap pausiert
+  const touchTimeRef = useRef<number>(0);
   function onTouchStart(e: React.TouchEvent) {
     const t = e.touches[0];
     touchStart.current = { x: t.clientX, y: t.clientY };
+    touchTimeRef.current = performance.now();
   }
   function onTouchEnd(e: React.TouchEvent) {
     if (!touchStart.current) return;
     const t = e.changedTouches[0];
     const dx = t.clientX - touchStart.current.x;
     const dy = t.clientY - touchStart.current.y;
+    const dt = performance.now() - touchTimeRef.current;
     touchStart.current = null;
-    if (Math.abs(dx) < 18 && Math.abs(dy) < 18) return;
+    const dist = Math.hypot(dx, dy);
+    // Tap (kurze Berührung, kaum Bewegung) → Pause / Resume / Start
+    if (dist < 12 && dt < 280) {
+      if (state.status === 'idle') start();
+      else if (state.status === 'playing') pause();
+      else if (state.status === 'paused') resume();
+      return;
+    }
+    if (dist < 18) return;
     if (state.status === 'idle') start();
     if (state.status !== 'playing') return;
     if (Math.abs(dx) > Math.abs(dy)) turn(dx > 0 ? 'right' : 'left');
@@ -764,34 +747,11 @@ export default function SnakeGame() {
         )}
       </div>
 
-      {/* Mobile Touch-Controls */}
-      <div className="grid grid-cols-3 gap-3 sm:hidden mt-1 mx-auto">
-        <span />
-        <TouchKey label="Hoch" onClick={() => turn('up')}>▲</TouchKey>
-        <span />
-        <TouchKey label="Links" onClick={() => turn('left')}>◀</TouchKey>
-        <button
-          onClick={() => (state.status === 'playing' ? pause() : resume())}
-          className="flex items-center justify-center text-rp-text-secondary text-base transition-all duration-rp active:scale-95"
-          style={{
-            width: 56,
-            height: 56,
-            borderRadius: 12,
-            background: 'rgba(212,201,181,0.06)',
-            border: '1px solid rgba(212,201,181,0.15)',
-          }}
-          aria-label="Pause"
-        >
-          ⏸
-        </button>
-        <TouchKey label="Rechts" onClick={() => turn('right')}>▶</TouchKey>
-        <span />
-        <TouchKey label="Runter" onClick={() => turn('down')}>▼</TouchKey>
-        <span />
-      </div>
-
       <p className="hidden sm:block text-xs text-rp-text-muted rp-mono text-center mt-1">
-        Pfeiltasten / WASD bewegen · Esc/P pausiert · Wische auf Touch
+        Pfeiltasten / WASD bewegen · Esc/P pausiert
+      </p>
+      <p className="sm:hidden text-xs text-rp-text-muted rp-mono text-center mt-1">
+        ↑↓←→ Wischen zum Steuern · Tippen pausiert
       </p>
 
       {!isSupabaseConfigured && (
