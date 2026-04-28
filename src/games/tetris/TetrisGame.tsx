@@ -238,18 +238,32 @@ export default function TetrisGame() {
   const particlesRef = useRef<Particle[]>([]);
   const bgParticlesRef = useRef<Particle[]>([]);
   const lastFrameAtRef = useRef<number>(performance.now());
-  const shakeUntilRef = useRef<number>(0);
-  const glowUntilRef = useRef<number>(0);
-  const glowColorRef = useRef<string>('rgba(220, 13, 29, 0.5)');
   const lineFragKeyRef = useRef('');
   const pendingLevelUpRef = useRef<string | null>(null);
 
   // Effekte (UI-State für CSS-Class-Toggles)
-  const [shakeKey, setShakeKey] = useState(0);
+  const shakeBoxRef = useRef<HTMLDivElement | null>(null);
   const [borderGlow, setBorderGlow] = useState<string | null>(null);
   const [scoreFloat, setScoreFloat] = useState<{ delta: number; id: number } | null>(null);
   const [scorePulseKey, setScorePulseKey] = useState(0);
   const lastScoreRef = useRef(state.score);
+
+  // Shake via Web Animations API — kein Remount des Canvas-Containers
+  const triggerShake = useCallback(() => {
+    const el = shakeBoxRef.current;
+    if (!el || !el.animate) return;
+    el.animate(
+      [
+        { transform: 'translateX(0)' },
+        { transform: 'translateX(-2px)' },
+        { transform: 'translateX(2px)' },
+        { transform: 'translateX(-1px)' },
+        { transform: 'translateX(1px)' },
+        { transform: 'translateX(0)' },
+      ],
+      { duration: SHAKE_MS, easing: 'ease-out' },
+    );
+  }, []);
 
   // Transient Overlays (DOM)
   const [lineText, setLineText] = useState<{
@@ -298,10 +312,9 @@ export default function TetrisGame() {
       }, COMBO_TEXT_MS);
     }
 
-    // IPPON: Shake + goldene Partikel
+    // IPPON: Shake (via WAAPI, kein Remount) + goldene Partikel
     if (state.lastClearCount === 4) {
-      shakeUntilRef.current = performance.now() + SHAKE_MS;
-      setShakeKey((k) => k + 1);
+      triggerShake();
     }
 
     // Marker für Render-Loop, dass beim nächsten Frame Fragmente gespawnt werden
@@ -319,8 +332,6 @@ export default function TetrisGame() {
       }, LEVELUP_MS);
       // Border-Glow in neuer Belt-Farbe
       const beltGlow = BELT_LEVELS[state.beltIndex]?.glow ?? 'rgba(255,255,255,0.3)';
-      glowUntilRef.current = performance.now() + LEVELUP_GLOW_MS;
-      glowColorRef.current = beltGlow;
       setBorderGlow(beltGlow);
       window.setTimeout(() => setBorderGlow(null), LEVELUP_GLOW_MS);
       // Funkenregen von oben — wird im Render-Loop gespawnt (kennt cssWidth)
@@ -549,8 +560,14 @@ export default function TetrisGame() {
 
   useEffect(() => {
     let raf = 0;
+    let errorCount = 0;
     const loop = () => {
-      draw();
+      try {
+        draw();
+      } catch (err) {
+        errorCount++;
+        if (errorCount <= 3) console.error('[Tetris] render error:', err);
+      }
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
@@ -675,12 +692,11 @@ export default function TetrisGame() {
         {/* Board-Spalte */}
         <div className="flex flex-col items-center gap-3 w-full">
           <div
+            ref={shakeBoxRef}
             className="relative shrink-0"
-            key={`shake-${shakeKey}`}
             style={{
               width: 'min(70vw, 320px)',
               aspectRatio: '10 / 20',
-              animation: shakeKey > 0 ? `rp-shake ${SHAKE_MS}ms ease-out` : undefined,
             }}
           >
             <canvas

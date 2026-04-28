@@ -90,6 +90,10 @@ export function drawBlock(
   type: PieceType,
   opts: BlockOpts = {},
 ) {
+  // Bei Kontraktions-Animation während Linien-Clear wird cellSize → 0.
+  // Wenn wir hier durchziehen, ergibt size = cellSize - 1 negative Werte
+  // und drawRoundedRect → arcTo wirft IndexSizeError → die rAF-Loop stirbt.
+  if (cellSize <= 1) return;
   const meta = PIECE_META[type];
   const padding = 0.5;
   const x = cx + padding;
@@ -726,17 +730,21 @@ export function drawBoard(args: BoardRenderArgs) {
         widthScale = Math.max(0, 1 - contractAmount);
         xOffset = (cellW * (1 - widthScale)) / 2;
       }
-      drawBlock(
-        ctx,
-        c * cellW + xOffset,
-        r * cellH,
-        cellW * widthScale,
-        v as PieceType,
-        {
-          flashAmount: isFlash ? flashAmount : 0,
-          kanjiAlpha: isFlash ? 0.3 + 0.7 * flashAmount : 0.3,
-        },
-      );
+      const drawW = cellW * widthScale;
+      // Defensiv: Sehr schmale Reste nicht zeichnen (vermeidet negative size)
+      if (drawW > 1) {
+        drawBlock(
+          ctx,
+          c * cellW + xOffset,
+          r * cellH,
+          drawW,
+          v as PieceType,
+          {
+            flashAmount: isFlash ? flashAmount : 0,
+            kanjiAlpha: isFlash ? 0.3 + 0.7 * flashAmount : 0.3,
+          },
+        );
+      }
     }
   }
 
