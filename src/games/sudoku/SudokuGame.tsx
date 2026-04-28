@@ -11,8 +11,8 @@ import SudokuGrid from './SudokuGrid';
 import NumberPad from './NumberPad';
 import BeltProgress from './BeltProgress';
 import BreathTimer from './BreathTimer';
-import { isSupabaseConfigured, supabase } from '../../lib/supabase';
-import { useAuth } from '../../hooks/useAuth';
+import { isSupabaseConfigured } from '../../lib/supabase';
+import NameInputForm from '../../components/NameInputForm';
 
 function useScoreCounter(target: number, active: boolean, duration = 1500) {
   const [value, setValue] = useState(0);
@@ -152,6 +152,8 @@ function ResultModal({
   belt,
   unlockedNew,
   onAgain,
+  metadata,
+  beltLevel,
 }: {
   status: 'won' | 'timeout';
   rating: 'kata' | 'technique' | 'passed' | null;
@@ -161,6 +163,8 @@ function ResultModal({
   belt: BeltRank;
   unlockedNew: BeltRank | null;
   onAgain: () => void;
+  metadata: Record<string, unknown>;
+  beltLevel: number;
 }) {
   const counter = useScoreCounter(score, status === 'won');
   const ratingLabel =
@@ -254,6 +258,17 @@ function ResultModal({
           </p>
         )}
 
+        {status === 'won' && (
+          <div className="mt-6 flex justify-center">
+            <NameInputForm
+              game="sudoku"
+              score={score}
+              level={beltLevel}
+              metadata={metadata}
+            />
+          </div>
+        )}
+
         <div className="mt-8 flex flex-col gap-3">
           <button onClick={onAgain} className="rp-btn w-full">
             Nochmal
@@ -281,8 +296,6 @@ export default function SudokuGame() {
     togglePause,
     toggleNotesMode,
   } = useSudokuGame();
-  const { user } = useAuth();
-  const [saved, setSaved] = useState(false);
   const [unlockSnapshot, setUnlockSnapshot] = useState<BeltRank[]>(
     state.unlockedBelts,
   );
@@ -294,41 +307,7 @@ export default function SudokuGame() {
     }
   }, [state.status]);
 
-  // Highscore save
-  useEffect(() => {
-    if (
-      state.status === 'won' &&
-      !saved &&
-      isSupabaseConfigured &&
-      user &&
-      state.score > 0
-    ) {
-      setSaved(true);
-      const beltLevel = BELT_ORDER.indexOf(state.currentBelt) + 1;
-      supabase
-        .from('highscores')
-        .insert({
-          user_id: user.id,
-          game: 'sudoku',
-          score: state.score,
-          level: beltLevel,
-          metadata: {
-            belt: state.currentBelt,
-            rating: state.rating,
-            errors: state.errors,
-            hints_used: state.hintsUsed,
-            time_used:
-              state.totalTime !== null && state.timeRemaining !== null
-                ? state.totalTime - state.timeRemaining
-                : null,
-          },
-        })
-        .then(({ error }) => {
-          if (error) console.error('[Sudoku] Highscore save failed:', error.message);
-        });
-    }
-    if (state.status !== 'won' && saved) setSaved(false);
-  }, [state.status, state.score, state.currentBelt, state.rating, state.errors, state.hintsUsed, state.timeRemaining, state.totalTime, user, saved]);
+  // (Score-Save erfolgt jetzt über NameInputForm im ResultModal)
 
   // Keyboard
   useEffect(() => {
@@ -589,13 +568,7 @@ export default function SudokuGame() {
 
       {!isSupabaseConfigured && (
         <p className="text-xs text-rp-text-muted text-center">
-          Gast-Modus: Highscores werden nicht gespeichert. Belt-Fortschritt nur
-          lokal.
-        </p>
-      )}
-      {isSupabaseConfigured && !user && (
-        <p className="text-xs text-rp-text-muted text-center">
-          Logge dich ein, um deinen Highscore zu speichern.
+          Bestenliste momentan nicht verfügbar. Belt-Fortschritt nur lokal.
         </p>
       )}
 
@@ -609,6 +582,17 @@ export default function SudokuGame() {
           belt={state.currentBelt}
           unlockedNew={unlockedNew}
           onAgain={() => startGame(state.currentBelt)}
+          metadata={{
+            belt: state.currentBelt,
+            rating: state.rating,
+            errors: state.errors,
+            hints_used: state.hintsUsed,
+            time_used:
+              state.totalTime !== null && state.timeRemaining !== null
+                ? state.totalTime - state.timeRemaining
+                : null,
+          }}
+          beltLevel={BELT_ORDER.indexOf(state.currentBelt) + 1}
         />
       )}
     </div>

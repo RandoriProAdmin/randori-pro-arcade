@@ -25,8 +25,8 @@ import {
   spawnTailCutParticles,
   type SnakeParticle,
 } from './snakeRenderer';
-import { isSupabaseConfigured, supabase } from '../../lib/supabase';
-import { useAuth } from '../../hooks/useAuth';
+import { isSupabaseConfigured } from '../../lib/supabase';
+import NameInputForm from '../../components/NameInputForm';
 
 const HIGHSCORE_KEY = 'randori-pro-arcade.snake.highscore';
 const FOODS_PER_BELT = 5;
@@ -170,8 +170,6 @@ export default function SnakeGame() {
   const touchStart = useRef<{ x: number; y: number } | null>(null);
   const { state, start, reset, turn, pause, resume, giveUp, setWrapAround } =
     useSnakeGame();
-  const { user } = useAuth();
-  const [saved, setSaved] = useState(false);
   const [bestScore, setBestScore] = useState(0);
   const [isNewHigh, setIsNewHigh] = useState(false);
   const [gameOverPhase, setGameOverPhase] = useState<'blink' | 'shown'>('blink');
@@ -298,16 +296,16 @@ export default function SnakeGame() {
     return () => window.clearTimeout(t);
   }, [state.status]);
 
-  // Highscore-Save bei Game Over
+  // Lokaler Highscore + isNewHigh-Detection bei Game Over
+  const savedRef = useRef(false);
   useEffect(() => {
     if (state.status !== 'gameover') {
-      if (saved) setSaved(false);
+      savedRef.current = false;
       if (isNewHigh) setIsNewHigh(false);
       return;
     }
-    if (saved) return;
-    setSaved(true);
-
+    if (savedRef.current) return;
+    savedRef.current = true;
     const newHigh = state.score > bestScore;
     setIsNewHigh(newHigh);
     if (newHigh) {
@@ -318,25 +316,7 @@ export default function SnakeGame() {
         // ignorieren
       }
     }
-
-    if (isSupabaseConfigured && user && state.score > 0) {
-      supabase
-        .from('highscores')
-        .insert({
-          user_id: user.id,
-          game: 'snake',
-          score: state.score,
-          level: state.level,
-          metadata: {
-            belt: SNAKE_BELTS[state.beltIndex].name,
-            wrap_around: state.wrapAround,
-          },
-        })
-        .then(({ error }) => {
-          if (error) console.error('[Snake] Highscore save failed:', error.message);
-        });
-    }
-  }, [state.status, state.score, state.level, state.beltIndex, state.wrapAround, user, saved, bestScore]);
+  }, [state.status, state.score, bestScore, isNewHigh]);
 
   // ────────────── Render-Loop (rAF) ──────────────
   const draw = useCallback((now: number) => {
@@ -752,6 +732,16 @@ export default function SnakeGame() {
                 </p>
               )}
 
+              <NameInputForm
+                game="snake"
+                score={state.score}
+                level={state.level}
+                metadata={{
+                  belt: SNAKE_BELTS[state.beltIndex].name,
+                  wrap_around: state.wrapAround,
+                }}
+              />
+
               <div className="flex flex-col gap-2 w-full mt-2">
                 <button
                   onClick={() => {
@@ -803,12 +793,7 @@ export default function SnakeGame() {
 
       {!isSupabaseConfigured && (
         <p className="text-xs text-rp-text-muted text-center">
-          Gast-Modus: Highscores werden nicht in der Cloud gespeichert.
-        </p>
-      )}
-      {isSupabaseConfigured && !user && (
-        <p className="text-xs text-rp-text-muted text-center">
-          Logge dich ein, um deinen Highscore zu speichern.
+          Bestenliste momentan nicht verfügbar.
         </p>
       )}
     </div>

@@ -1,8 +1,5 @@
 import { useState } from 'react';
 import { NavLink, Outlet, Link, useLocation } from 'react-router-dom';
-import { useAuth } from '../hooks/useAuth';
-import { signOut } from '../lib/auth';
-import AuthModal from './AuthModal';
 
 function NavItem({
   to,
@@ -36,8 +33,7 @@ function NavItem({
   );
 }
 
-function Navbar({ onLogin }: { onLogin: () => void }) {
-  const { user } = useAuth();
+function Navbar() {
   const [open, setOpen] = useState(false);
   const close = () => setOpen(false);
 
@@ -57,23 +53,6 @@ function Navbar({ onLogin }: { onLogin: () => void }) {
         <div className="hidden md:flex items-center gap-1">
           <NavItem to="/" end>Dojo</NavItem>
           <NavItem to="/bestenliste">Bestenliste</NavItem>
-          {user ? (
-            <button
-              onClick={() => signOut()}
-              className="rp-btn-secondary ml-3"
-              style={{ padding: '8px 18px', fontSize: '13px' }}
-            >
-              Logout
-            </button>
-          ) : (
-            <button
-              onClick={onLogin}
-              className="rp-btn ml-3"
-              style={{ padding: '8px 18px', fontSize: '13px' }}
-            >
-              Login
-            </button>
-          )}
         </div>
 
         {/* Mobile burger */}
@@ -106,27 +85,6 @@ function Navbar({ onLogin }: { onLogin: () => void }) {
           <div className="mx-auto max-w-6xl px-4 py-3 flex flex-col gap-1">
             <MobileNavLink to="/" end onClick={close}>Dojo</MobileNavLink>
             <MobileNavLink to="/bestenliste" onClick={close}>Bestenliste</MobileNavLink>
-            {user ? (
-              <button
-                onClick={() => {
-                  signOut();
-                  close();
-                }}
-                className="rp-btn-secondary mt-2 w-full"
-              >
-                Logout
-              </button>
-            ) : (
-              <button
-                onClick={() => {
-                  onLogin();
-                  close();
-                }}
-                className="rp-btn mt-2 w-full"
-              >
-                Login
-              </button>
-            )}
           </div>
         </div>
       )}
@@ -191,12 +149,11 @@ function Footer() {
 }
 
 export default function Layout() {
-  const [authOpen, setAuthOpen] = useState(false);
   const location = useLocation();
 
   return (
     <div className="min-h-full flex flex-col text-white">
-      <Navbar onLogin={() => setAuthOpen(true)} />
+      <Navbar />
       <main
         key={location.pathname}
         className="flex-1 mx-auto w-full max-w-6xl px-4 sm:px-6 py-8 rp-anim-fade"
@@ -204,7 +161,6 @@ export default function Layout() {
         <Outlet />
       </main>
       <Footer />
-      <AuthModal open={authOpen} onClose={() => setAuthOpen(false)} />
     </div>
   );
 }

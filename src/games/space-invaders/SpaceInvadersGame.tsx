@@ -11,8 +11,8 @@ import {
 } from './constants';
 import { drawEnemy, drawHeartFighter, drawPowerUp } from './sprites';
 import type { PowerUpKind } from './sprites';
-import { isSupabaseConfigured, supabase } from '../../lib/supabase';
-import { useAuth } from '../../hooks/useAuth';
+import { isSupabaseConfigured } from '../../lib/supabase';
+import NameInputForm from '../../components/NameInputForm';
 
 const HIGHSCORE_KEY = 'randori-pro-arcade.invaders.highscore';
 
@@ -224,7 +224,6 @@ export default function SpaceInvadersGame() {
     inputRight,
     switchWeapon,
   } = useSpaceInvadersGame();
-  const { user } = useAuth();
   const [bestScore, setBestScore] = useState(0);
   const [isNewHigh, setIsNewHigh] = useState(false);
   const savedRef = useRef(false);
@@ -362,26 +361,7 @@ export default function SpaceInvadersGame() {
       }
     }
 
-    if (isSupabaseConfigured && user && state.score > 0) {
-      supabase
-        .from('highscores')
-        .insert({
-          user_id: user.id,
-          game: 'space-invaders',
-          score: state.score,
-          level: state.wavesSurvived,
-          metadata: {
-            wavesSurvived: state.wavesSurvived,
-            enemiesDefeated: state.enemiesDefeated,
-            bossesDefeated: state.bossesDefeated,
-            belt: belt.belt.name,
-          },
-        })
-        .then(({ error }) => {
-          if (error) console.error('[DojoDefenders] Highscore save failed:', error.message);
-        });
-    }
-  }, [state.status, state.score, state.wavesSurvived, state.enemiesDefeated, state.bossesDefeated, belt.belt.name, user, bestScore, isNewHigh]);
+  }, [state.status, state.score, bestScore, isNewHigh]);
 
   const wavesInBelt = state.wavesSurvived - belt.index * 3;
   const showAnnounce = state.status === 'announce' && state.announce;
@@ -677,6 +657,17 @@ export default function SpaceInvadersGame() {
                   Neuer Rekord!
                 </p>
               )}
+              <NameInputForm
+                game="space-invaders"
+                score={state.score}
+                level={state.wavesSurvived}
+                metadata={{
+                  wavesSurvived: state.wavesSurvived,
+                  enemiesDefeated: state.enemiesDefeated,
+                  bossesDefeated: state.bossesDefeated,
+                  belt: belt.belt.name,
+                }}
+              />
               <div className="flex flex-col gap-2 w-full mt-1">
                 <button onClick={() => start()} className="rp-btn w-full">
                   Nochmal verteidigen
@@ -776,12 +767,7 @@ export default function SpaceInvadersGame() {
 
       {!isSupabaseConfigured && (
         <p className="text-xs text-rp-text-muted text-center">
-          Gast-Modus: Highscores werden nicht in der Cloud gespeichert.
-        </p>
-      )}
-      {isSupabaseConfigured && !user && (
-        <p className="text-xs text-rp-text-muted text-center">
-          Logge dich ein, um deinen Highscore zu speichern.
+          Bestenliste momentan nicht verfügbar.
         </p>
       )}
     </div>

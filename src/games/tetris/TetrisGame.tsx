@@ -26,8 +26,8 @@ import {
   ROWS as TETRIS_ROWS,
 } from './tetrisConstants';
 import { drawBoard, drawPiecePreview, type Particle } from './tetrisRenderer';
-import { isSupabaseConfigured, supabase } from '../../lib/supabase';
-import { useAuth } from '../../hooks/useAuth';
+import { isSupabaseConfigured } from '../../lib/supabase';
+import NameInputForm from '../../components/NameInputForm';
 
 const HIGHSCORE_KEY = 'randori-pro-arcade.tetris.highscore';
 const UNLOCK_KEY = 'randori-pro-arcade.tetris.unlocked-level';
@@ -225,7 +225,6 @@ export default function TetrisGame() {
     rotate,
     hardDrop,
   } = useTetrisGame();
-  const { user } = useAuth();
   const [saved, setSaved] = useState(false);
   const [bestScore, setBestScore] = useState(0);
   const [unlockedLevel, setUnlockedLevel] = useState(1);
@@ -387,26 +386,7 @@ export default function TetrisGame() {
       }
     }
 
-    if (isSupabaseConfigured && user && state.score > 0) {
-      supabase
-        .from('highscores')
-        .insert({
-          user_id: user.id,
-          game: 'tetris',
-          score: state.score,
-          level: state.level,
-          metadata: {
-            lines: state.lines,
-            belt: BELT_LEVELS[state.beltIndex].name,
-            start_belt: BELT_LEVELS[state.startBeltIndex].name,
-            rating: ratingForLines(state.lines).name,
-          },
-        })
-        .then(({ error }) => {
-          if (error) console.error('[Tetris] Highscore save failed:', error.message);
-        });
-    }
-  }, [state.status, state.score, state.level, state.lines, state.beltIndex, state.startBeltIndex, user, saved, bestScore, unlockedLevel, isNewHigh]);
+  }, [state.status, state.score, state.level, state.lines, state.beltIndex, state.startBeltIndex, saved, bestScore, unlockedLevel, isNewHigh]);
 
   // Render-Loop (rAF — läuft immer, liest stateRef)
   const draw = useCallback(() => {
@@ -875,6 +855,17 @@ export default function TetrisGame() {
                       Neuer Rekord!
                     </p>
                   )}
+                  <NameInputForm
+                    game="tetris"
+                    score={state.score}
+                    level={state.level}
+                    metadata={{
+                      lines: state.lines,
+                      belt: BELT_LEVELS[state.beltIndex].name,
+                      start_belt: BELT_LEVELS[state.startBeltIndex].name,
+                      rating: ratingForLines(state.lines).name,
+                    }}
+                  />
                   <div className="flex flex-col gap-2 w-full mt-1">
                     <button
                       onClick={() => start(state.startBeltIndex)}
@@ -993,12 +984,7 @@ export default function TetrisGame() {
 
       {!isSupabaseConfigured && (
         <p className="text-xs text-rp-text-muted text-center">
-          Gast-Modus: Highscores werden nicht in der Cloud gespeichert.
-        </p>
-      )}
-      {isSupabaseConfigured && !user && (
-        <p className="text-xs text-rp-text-muted text-center">
-          Logge dich ein, um deinen Highscore zu speichern.
+          Bestenliste momentan nicht verfügbar.
         </p>
       )}
     </div>
