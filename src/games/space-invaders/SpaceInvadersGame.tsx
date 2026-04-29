@@ -13,7 +13,7 @@ import { drawEnemy, drawHeartFighter, drawPowerUp } from './sprites';
 import type { PowerUpKind } from './sprites';
 import { isSupabaseConfigured } from '../../lib/supabase';
 import { isInputActive } from '../../lib/keyboard';
-import { useGameViewportLock } from '../../hooks/useGameViewportLock';
+import { useMobileScrollLock } from '../../hooks/useMobileScrollLock';
 import NameInputForm from '../../components/NameInputForm';
 
 const HIGHSCORE_KEY = 'randori-pro-arcade.invaders.highscore';
@@ -174,8 +174,12 @@ export default function SpaceInvadersGame() {
   const [isNewHigh, setIsNewHigh] = useState(false);
   const savedRef = useRef(false);
 
-  // Viewport-Lock auf Mobile, solange das Spiel aktiv ist (kein Hintergrund-Scroll)
-  useGameViewportLock(state.status !== 'gameOver');
+  // Scroll-Lock NUR auf Touch-Geräten und nur während des Spielens
+  useMobileScrollLock(
+    state.status === 'playing' ||
+      state.status === 'paused' ||
+      state.status === 'announce',
+  );
 
   // Highscore laden
   useEffect(() => {
@@ -432,7 +436,7 @@ export default function SpaceInvadersGame() {
   const effectZanshin = (state.activeEffects.zanshin ?? 0) - now;
 
   return (
-    <div className="w-full flex flex-col gap-3 sm:gap-4" ref={containerRef}>
+    <div id="game-container" className="w-full flex flex-col gap-3 sm:gap-4" ref={containerRef}>
       {/* Belt-Progress */}
       <BeltProgressBar beltIndex={belt.index} wavesInBelt={wavesInBelt} />
 

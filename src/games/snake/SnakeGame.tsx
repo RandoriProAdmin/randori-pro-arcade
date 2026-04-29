@@ -27,7 +27,7 @@ import {
 } from './snakeRenderer';
 import { isSupabaseConfigured } from '../../lib/supabase';
 import { isInputActive } from '../../lib/keyboard';
-import { useGameViewportLock } from '../../hooks/useGameViewportLock';
+import { useMobileScrollLock } from '../../hooks/useMobileScrollLock';
 import NameInputForm from '../../components/NameInputForm';
 
 const HIGHSCORE_KEY = 'randori-pro-arcade.snake.highscore';
@@ -168,8 +168,8 @@ export default function SnakeGame() {
   const wrapAnimAtRef = useRef<number>(0);
   const lastScrollCutAtRef = useRef<number>(0);
 
-  // Viewport-Lock auf Mobile, solange das Spiel aktiv ist (kein Hintergrund-Scroll)
-  useGameViewportLock(state.status !== 'gameover');
+  // Scroll-Lock NUR auf Touch-Geräten und nur während des Spielens
+  useMobileScrollLock(state.status === 'playing' || state.status === 'paused');
 
   // Highscore aus localStorage laden
   useEffect(() => {
@@ -553,7 +553,7 @@ export default function SnakeGame() {
   );
 
   return (
-    <div className="w-full max-w-[600px] flex flex-col items-stretch gap-3">
+    <div id="game-container" className="w-full max-w-[600px] flex flex-col items-stretch gap-3">
       {/* Score-Bar */}
       <div className="flex items-center justify-between gap-3 pb-2 border-b border-[rgba(212,201,181,0.1)]">
         <div className="flex items-center gap-3 min-w-0">

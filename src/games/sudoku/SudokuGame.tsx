@@ -13,7 +13,7 @@ import BeltProgress from './BeltProgress';
 import BreathTimer from './BreathTimer';
 import { isSupabaseConfigured } from '../../lib/supabase';
 import { isInputActive } from '../../lib/keyboard';
-import { useGameViewportLock } from '../../hooks/useGameViewportLock';
+import { useMobileScrollLock } from '../../hooks/useMobileScrollLock';
 import NameInputForm from '../../components/NameInputForm';
 
 function useScoreCounter(target: number, active: boolean, duration = 1500) {
@@ -302,9 +302,9 @@ export default function SudokuGame() {
     state.unlockedBelts,
   );
 
-  // Viewport-Lock: außer bei "won" / "timeout" — dort soll der Spieler scrollen können
-  useGameViewportLock(
-    state.status !== 'won' && state.status !== 'timeout',
+  // Scroll-Lock NUR auf Touch-Geräten und nur während des Spielens
+  useMobileScrollLock(
+    state.status === 'playing' || state.status === 'paused',
   );
 
   // Track unlocked-set when status flips into "won/timeout" so we can detect new unlocks
@@ -466,7 +466,7 @@ export default function SudokuGame() {
   const showResult = state.status === 'won' || state.status === 'timeout';
 
   return (
-    <div className="w-full flex flex-col gap-4">
+    <div id="game-container" className="w-full flex flex-col gap-4">
       <BeltProgress
         current={state.currentBelt}
         unlocked={state.unlockedBelts}

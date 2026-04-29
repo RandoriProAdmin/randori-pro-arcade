@@ -28,7 +28,7 @@ import {
 import { drawBoard, drawPiecePreview, type Particle } from './tetrisRenderer';
 import { isSupabaseConfigured } from '../../lib/supabase';
 import { isInputActive } from '../../lib/keyboard';
-import { useGameViewportLock } from '../../hooks/useGameViewportLock';
+import { useMobileScrollLock } from '../../hooks/useMobileScrollLock';
 import NameInputForm from '../../components/NameInputForm';
 import { useTetrisTouchControls } from './useTetrisTouchControls';
 
@@ -200,8 +200,12 @@ export default function TetrisGame() {
   const [unlockedLevel, setUnlockedLevel] = useState(1);
   const [isNewHigh, setIsNewHigh] = useState(false);
 
-  // Viewport-Lock auf Mobile, solange das Spiel aktiv ist (kein Hintergrund-Scroll)
-  useGameViewportLock(state.status !== 'gameover');
+  // Scroll-Lock NUR auf Touch-Geräten und nur während des Spielens
+  useMobileScrollLock(
+    state.status === 'playing' ||
+      state.status === 'paused' ||
+      state.status === 'lineflash',
+  );
 
   // Refs für Render-Loop (vermeiden re-init)
   const stateRef = useRef(state);
@@ -649,7 +653,7 @@ export default function TetrisGame() {
   };
 
   return (
-    <div className="w-full flex flex-col gap-3 sm:gap-4">
+    <div id="game-container" className="w-full flex flex-col gap-3 sm:gap-4">
       {/* Belt-Progress (full width, horizontal) */}
       <BeltProgressBar
         beltIndex={state.beltIndex}
