@@ -28,7 +28,9 @@ import {
 import { drawBoard, drawPiecePreview, type Particle } from './tetrisRenderer';
 import { isSupabaseConfigured } from '../../lib/supabase';
 import { isInputActive } from '../../lib/keyboard';
+import { useGameViewportLock } from '../../hooks/useGameViewportLock';
 import NameInputForm from '../../components/NameInputForm';
+import { useTetrisTouchControls } from './useTetrisTouchControls';
 
 const HIGHSCORE_KEY = 'randori-pro-arcade.tetris.highscore';
 const UNLOCK_KEY = 'randori-pro-arcade.tetris.unlocked-level';
@@ -197,6 +199,9 @@ export default function TetrisGame() {
   const [bestScore, setBestScore] = useState(0);
   const [unlockedLevel, setUnlockedLevel] = useState(1);
   const [isNewHigh, setIsNewHigh] = useState(false);
+
+  // Viewport-Lock auf Mobile, solange das Spiel aktiv ist (kein Hintergrund-Scroll)
+  useGameViewportLock(state.status !== 'gameover');
 
   // Refs für Render-Loop (vermeiden re-init)
   const stateRef = useRef(state);
@@ -594,53 +599,20 @@ export default function TetrisGame() {
     return () => window.removeEventListener('keydown', onKey);
   }, [state.status, state.startBeltIndex, left, right, softDrop, rotate, hardDrop, start, pause, resume]);
 
-  // Touch — Swipe steuert, Tap rotiert
-  const touchStartRef = useRef<{ x: number; y: number; t: number } | null>(null);
-  function onCanvasTouchStart(e: React.TouchEvent) {
-    const t = e.touches[0];
-    touchStartRef.current = { x: t.clientX, y: t.clientY, t: performance.now() };
-  }
-  function onCanvasTouchEnd(e: React.TouchEvent) {
-    const ts = touchStartRef.current;
-    if (!ts) return;
-    touchStartRef.current = null;
-    const t = e.changedTouches[0];
-    const dx = t.clientX - ts.x;
-    const dy = t.clientY - ts.y;
-    const dt = performance.now() - ts.t;
-    const dist = Math.hypot(dx, dy);
-    const isTap = dist < 14 && dt < 280;
-
-    if (state.status === 'idle') {
-      if (isTap) start(state.startBeltIndex);
-      return;
-    }
-    if (state.status === 'paused') {
-      if (isTap) resume();
-      return;
-    }
-    if (state.status !== 'playing' && state.status !== 'lineflash') return;
-
-    if (isTap) {
-      rotate();
-      return;
-    }
-    // Vertikal dominant
-    if (Math.abs(dy) > Math.abs(dx)) {
-      if (dy < -40) hardDrop();
-      else if (dy > 140) hardDrop();
-      else if (dy > 30) softDrop();
-      return;
-    }
-    // Horizontal: multi-cell move basierend auf Distanz
-    const wrap = boardRef.current?.parentElement;
-    const cellPx = wrap ? wrap.clientWidth / TETRIS_COLS : 30;
-    const cells = Math.max(1, Math.round(Math.abs(dx) / cellPx));
-    for (let i = 0; i < cells; i++) {
-      if (dx > 0) right();
-      else left();
-    }
-  }
+  // Touch — Zonen-System (siehe useTetrisTouchControls)
+  useTetrisTouchControls({
+    canvasRef: boardRef,
+    onMoveLeft: left,
+    onMoveRight: right,
+    onRotate: rotate,
+    onSoftDrop: softDrop,
+    onHardDrop: hardDrop,
+    onTogglePause: () => {
+      if (state.status === 'playing') pause();
+      else if (state.status === 'paused') resume();
+    },
+    isPlaying: state.status === 'playing' || state.status === 'lineflash',
+  });
 
   const beltDef = BELT_LEVELS[state.beltIndex];
   const startBelt = BELT_LEVELS[state.startBeltIndex];
@@ -698,8 +670,6 @@ export default function TetrisGame() {
           >
             <canvas
               ref={boardRef}
-              onTouchStart={onCanvasTouchStart}
-              onTouchEnd={onCanvasTouchEnd}
               className="absolute inset-0 w-full h-full rounded-rp-md"
               style={{
                 border: '1px solid rgba(212, 201, 181, 0.12)',
@@ -711,6 +681,29 @@ export default function TetrisGame() {
               }}
               aria-label="Tetris-Spielfeld"
             />
+
+            {/* Pause-Button (nur Mobile, oben rechts) */}
+            {state.status === 'playing' && (
+              <button
+                type="button"
+                onClick={pause}
+                onContextMenu={(e) => e.preventDefault()}
+                aria-label="Pause"
+                className="absolute top-2 right-2 lg:hidden flex items-center justify-center select-none"
+                style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: 8,
+                  background: 'rgba(0,0,0,0.6)',
+                  border: '1px solid rgba(212, 201, 181, 0.2)',
+                  color: '#d4c9b5',
+                  fontSize: 14,
+                  backdropFilter: 'blur(4px)',
+                }}
+              >
+                ❚❚
+              </button>
+            )}
 
             {/* Linien-Clear Text */}
             {lineText && lineTextCfg && state.status !== 'idle' && (
@@ -994,7 +987,7 @@ export default function TetrisGame() {
       </div>
 
       <p className="lg:hidden text-[11px] text-rp-text-muted rp-mono text-center leading-relaxed">
-        ←→ Wischen bewegt · Tippen rotiert · ↓ Soft Drop · ↑ Hard Drop
+        Tippe links/rechts zum Bewegen · Mitte zum Drehen · runter wischen = fallen
       </p>
 
       {!isSupabaseConfigured && (
@@ -1067,6 +1060,48 @@ function StartScreen({
 
         <div className="w-full max-w-[280px] mt-2">
           <TechniqueLegend />
+        </div>
+
+        {/* Mobile Zonen-Diagramm */}
+        <div
+          className="lg:hidden w-full max-w-[280px] mt-2 rounded-rp-sm p-2"
+          style={{
+            background: 'rgba(255,255,255,0.03)',
+            border: '1px dashed rgba(212,201,181,0.18)',
+          }}
+        >
+          <p className="text-[10px] uppercase tracking-rp-display text-rp-text-muted text-center mb-1.5">
+            Touch-Zonen
+          </p>
+          <p
+            className="text-center text-[10px] mb-1.5"
+            style={{ color: '#a0a0a0', fontFamily: 'inherit' }}
+          >
+            ↓ wischen = fallen lassen
+          </p>
+          <div
+            className="grid grid-cols-3 gap-1 text-center"
+            style={{ borderTop: '1px dashed rgba(212,201,181,0.18)', paddingTop: 6 }}
+          >
+            <div className="flex flex-col items-center gap-0.5 py-1.5">
+              <span className="text-rp-rot text-base">←</span>
+              <span className="text-[9px] text-rp-text-muted uppercase tracking-tight">links</span>
+            </div>
+            <div
+              className="flex flex-col items-center gap-0.5 py-1.5"
+              style={{ borderLeft: '1px dashed rgba(212,201,181,0.18)', borderRight: '1px dashed rgba(212,201,181,0.18)' }}
+            >
+              <span className="text-rp-beige text-base">↻</span>
+              <span className="text-[9px] text-rp-text-muted uppercase tracking-tight">drehen</span>
+            </div>
+            <div className="flex flex-col items-center gap-0.5 py-1.5">
+              <span className="text-rp-rot text-base">→</span>
+              <span className="text-[9px] text-rp-text-muted uppercase tracking-tight">rechts</span>
+            </div>
+          </div>
+          <p className="text-[9px] text-rp-text-muted text-center mt-1">
+            halten = wiederholen · 2-Finger = pause
+          </p>
         </div>
 
         <div className="flex items-center gap-2 mt-2">

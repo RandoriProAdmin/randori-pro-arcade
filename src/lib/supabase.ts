@@ -5,11 +5,9 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undef
 
 export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey);
 
-if (!isSupabaseConfigured && import.meta.env.DEV) {
-  console.warn(
-    '[Supabase] VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY fehlen. Auth und Highscores sind im Gast-Modus.',
-  );
-}
+console.log(
+  `[Supabase] konfiguriert: ${isSupabaseConfigured}${isSupabaseConfigured ? ` · host=${new URL(supabaseUrl!).host}` : ' · Highscores nur lokal'}`,
+);
 
 export const supabase = createClient(
   supabaseUrl ?? 'https://placeholder.supabase.co',

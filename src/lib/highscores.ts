@@ -87,6 +87,10 @@ export async function saveScore(
     created_at: new Date().toISOString(),
   };
 
+  console.log(
+    `[Highscores] Speichere: name="${trimmed}" game=${args.game} score=${args.score} level=${args.level}`,
+  );
+
   // Versuch 1: Supabase
   if (isSupabaseConfigured) {
     try {
@@ -99,14 +103,19 @@ export async function saveScore(
         display_name: trimmed,
       });
       if (!error) {
+        console.log('[Highscores] Supabase Antwort: success');
         // Auch lokal mitschneiden, damit lokale Liste nicht leer ist
         writeLocal(args.game, [...readLocal(args.game), localEntry]);
         return { ok: true, mode: 'cloud' };
       }
-      console.warn('[Highscores] Supabase save failed → localStorage:', error.message);
+      console.warn(
+        `[Highscores] Supabase Antwort: error · ${error.message} · code=${error.code} → localStorage-Fallback`,
+      );
     } catch (e) {
-      console.warn('[Highscores] Supabase exception → localStorage:', e);
+      console.warn('[Highscores] Supabase exception → localStorage-Fallback:', e);
     }
+  } else {
+    console.log('[Highscores] Supabase nicht konfiguriert → nur localStorage');
   }
 
   // Fallback: localStorage
@@ -132,10 +141,15 @@ export async function loadHighscores(
       if (game) q = q.eq('game', game);
       const { data, error } = await q;
       if (!error && data) {
+        console.log(
+          `[Highscores] geladen: ${data.length} Einträge aus Supabase (game=${game ?? 'all'})`,
+        );
         return data as TopScore[];
       }
       if (error) {
-        console.warn('[Highscores] load failed → localStorage:', error.message);
+        console.warn(
+          `[Highscores] Supabase load fehlgeschlagen → localStorage · ${error.message} · code=${error.code}`,
+        );
       }
     } catch (e) {
       console.warn('[Highscores] Supabase exception → localStorage:', e);
@@ -150,6 +164,9 @@ export async function loadHighscores(
   for (const g of games) all.push(...readLocal(g));
   all.sort((a, b) => b.score - a.score);
   const slice = all.slice(0, limit);
+  console.log(
+    `[Highscores] geladen: ${slice.length} Einträge aus localStorage (game=${game ?? 'all'})`,
+  );
   // Auf TopScore-Shape mappen
   return slice.map((e, i) => ({
     id: `local-${e.game}-${e.created_at}-${i}`,

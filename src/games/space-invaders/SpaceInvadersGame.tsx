@@ -13,6 +13,7 @@ import { drawEnemy, drawHeartFighter, drawPowerUp } from './sprites';
 import type { PowerUpKind } from './sprites';
 import { isSupabaseConfigured } from '../../lib/supabase';
 import { isInputActive } from '../../lib/keyboard';
+import { useGameViewportLock } from '../../hooks/useGameViewportLock';
 import NameInputForm from '../../components/NameInputForm';
 
 const HIGHSCORE_KEY = 'randori-pro-arcade.invaders.highscore';
@@ -172,6 +173,9 @@ export default function SpaceInvadersGame() {
   const [bestScore, setBestScore] = useState(0);
   const [isNewHigh, setIsNewHigh] = useState(false);
   const savedRef = useRef(false);
+
+  // Viewport-Lock auf Mobile, solange das Spiel aktiv ist (kein Hintergrund-Scroll)
+  useGameViewportLock(state.status !== 'gameOver');
 
   // Highscore laden
   useEffect(() => {

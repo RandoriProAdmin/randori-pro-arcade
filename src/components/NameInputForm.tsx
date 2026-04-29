@@ -60,8 +60,13 @@ export default function NameInputForm({ game, score, level, metadata }: Props) {
           maxLength={24}
           required
           autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="off"
+          spellCheck={false}
+          inputMode="text"
           autoFocus
-          className="flex-1 bg-[#0f0f0f] border border-[rgba(212,201,181,0.2)] focus:border-rp-rot focus:outline-none rounded-rp-sm px-3 py-1.5 text-sm text-white"
+          className="flex-1 bg-[#0f0f0f] border border-[rgba(212,201,181,0.2)] focus:border-rp-rot focus:outline-none rounded-rp-sm px-3 py-1.5 text-white"
+          style={{ fontSize: 16 }}
         />
         <button
           type="submit"

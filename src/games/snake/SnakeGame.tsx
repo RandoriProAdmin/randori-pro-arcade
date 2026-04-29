@@ -27,6 +27,7 @@ import {
 } from './snakeRenderer';
 import { isSupabaseConfigured } from '../../lib/supabase';
 import { isInputActive } from '../../lib/keyboard';
+import { useGameViewportLock } from '../../hooks/useGameViewportLock';
 import NameInputForm from '../../components/NameInputForm';
 
 const HIGHSCORE_KEY = 'randori-pro-arcade.snake.highscore';
@@ -166,6 +167,9 @@ export default function SnakeGame() {
   const lastTickKeyRef = useRef<number>(0);
   const wrapAnimAtRef = useRef<number>(0);
   const lastScrollCutAtRef = useRef<number>(0);
+
+  // Viewport-Lock auf Mobile, solange das Spiel aktiv ist (kein Hintergrund-Scroll)
+  useGameViewportLock(state.status !== 'gameover');
 
   // Highscore aus localStorage laden
   useEffect(() => {
@@ -751,7 +755,7 @@ export default function SnakeGame() {
         Pfeiltasten / WASD bewegen · Esc/P pausiert
       </p>
       <p className="sm:hidden text-xs text-rp-text-muted rp-mono text-center mt-1">
-        ↑↓←→ Wischen zum Steuern · Tippen pausiert
+        Wische in eine Richtung · Tippe zum Pausieren
       </p>
 
       {!isSupabaseConfigured && (

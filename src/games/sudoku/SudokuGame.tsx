@@ -13,6 +13,7 @@ import BeltProgress from './BeltProgress';
 import BreathTimer from './BreathTimer';
 import { isSupabaseConfigured } from '../../lib/supabase';
 import { isInputActive } from '../../lib/keyboard';
+import { useGameViewportLock } from '../../hooks/useGameViewportLock';
 import NameInputForm from '../../components/NameInputForm';
 
 function useScoreCounter(target: number, active: boolean, duration = 1500) {
@@ -301,6 +302,11 @@ export default function SudokuGame() {
     state.unlockedBelts,
   );
 
+  // Viewport-Lock: außer bei "won" / "timeout" — dort soll der Spieler scrollen können
+  useGameViewportLock(
+    state.status !== 'won' && state.status !== 'timeout',
+  );
+
   // Track unlocked-set when status flips into "won/timeout" so we can detect new unlocks
   useEffect(() => {
     if (state.status === 'playing' || state.status === 'generating') {
@@ -567,6 +573,10 @@ export default function SudokuGame() {
           />
         </aside>
       </div>
+
+      <p className="sm:hidden text-[11px] text-rp-text-muted rp-mono text-center leading-relaxed">
+        Tippe auf eine Zelle · Wähle eine Zahl
+      </p>
 
       {!isSupabaseConfigured && (
         <p className="text-xs text-rp-text-muted text-center">
