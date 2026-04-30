@@ -22,13 +22,22 @@ export function useMobileScrollLock(isGameActive: boolean) {
 
     const scrollY = window.scrollY;
 
-    // Spielfeld in den sichtbaren Bereich scrollen
-    const gameElement = document.getElementById('game-container');
-    if (gameElement) {
-      gameElement.scrollIntoView({ behavior: 'auto', block: 'center' });
+    // OBEREN Rand des Spielfelds in den sichtbaren Bereich scrollen.
+    // Wichtig: Canvas-Element direkt anvisieren (block:'start'), nicht den
+    // Container — sonst landet bei großen Containern das Canvas oberhalb
+    // des Viewports.
+    const target =
+      (document.querySelector('#game-container canvas') as HTMLElement | null) ??
+      document.getElementById('game-container');
+    if (target) {
+      const navbar = document.querySelector('header.sticky') as HTMLElement | null;
+      const navOffset = navbar ? navbar.getBoundingClientRect().height : 0;
+      const rect = target.getBoundingClientRect();
+      const targetY = window.scrollY + rect.top - navOffset - 8;
+      window.scrollTo(0, Math.max(0, targetY));
     }
 
-    // Body-Scroll erst nach kurzem Delay sperren (damit das scrollIntoView
+    // Body-Scroll erst nach kurzem Delay sperren (damit das Scrollen
     // sicher durchläuft)
     const timer = window.setTimeout(() => {
       document.body.style.overflow = 'hidden';
